@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>BIBLIO-PROSPECT | Référentiel & Prospection Librairies de France</title>
+  <meta name="description" content="Outil de prospection des librairies de France pour éditeurs : liste officielle du Ministère de la Culture, SIRET (SIRENE), coordonnées (OpenStreetMap), suivi commercial.">
+
+  <!-- Google Fonts : Plus Jakarta Sans & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Leaflet CSS pour la cartographie -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+  <!-- Feuille de Style Principale -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Écran d'accès : la page publique ne contient aucune donnée ; la clé ouvre le dépôt privé -->
+  <div class="gate active" id="gate">
+    <div class="gate-card">
+      <div class="brand-logo-icon" style="margin:0 auto 0.75rem;">📚</div>
+      <h1 class="gate-title">BIBLIO-PROSPECT</h1>
+      <p class="gate-sub">Accès réservé</p>
+      <form id="gate-form" onsubmit="submitGate(event)" autocomplete="on">
+        <input type="text" name="username" autocomplete="username" value="biblio-prospect" style="display:none;" readonly>
+        <label for="gate-token" class="gate-label">Clé d'accès</label>
+        <input type="password" id="gate-token" name="password" class="form-control" autocomplete="current-password" placeholder="github_pat_…">
+        <button type="submit" class="btn btn-primary" style="width:100%;margin-top:0.75rem;justify-content:center;">Entrer</button>
+        <p class="gate-help">Safari propose d'enregistrer la clé dans vos mots de passe : acceptez, elle sera remplie automatiquement les fois suivantes.</p>
+      </form>
+      <div id="gate-loading" style="display:none;" class="gate-help">⏳ Chargement des données…</div>
+      <div id="gate-error" class="gate-error" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       1. EN-TÊTE DE L'APPLICATION
+       ========================================================================== -->
+  <header class="app-header" id="main-header">
+    <div class="brand-section">
+      <div class="brand-logo-icon" id="brand-logo">📚</div>
+      <div class="brand-titles">
+        <h1>BIBLIO-PROSPECT</h1>
+        <div class="brand-subtitle">
+          <span>Prospection Édition</span>
+          <span>•</span>
+          <span class="badge-pilot" id="pilot-badge">Bretagne (219)</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Barre de Recherche Globale Instantanée -->
+    <div class="header-search">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="global-search-input" placeholder="Rechercher une librairie, ville, code postal, spécialité... (Ctrl+K)" autocomplete="off">
+      <button class="search-clear" id="search-clear-btn" title="Effacer la recherche">✕</button>
+    </div>
+
+    <!-- Actions Rapides & Switchers -->
+    <div class="header-actions">
+      <button class="save-status save-wait" id="save-status" title="Sauvegarde">💾</button>
+
+      <button class="btn btn-secondary" id="open-guide-btn" onclick="openGuideModal()" title="Consulter le guide de prospection en librairie">
+        💡 Guide Prospection
+      </button>
+
+      <button class="btn btn-gold" id="export-csv-btn" onclick="exportCSV()" title="Exporter en CSV (compatible Microsoft Excel)">
+        📥 Export Excel
+      </button>
+
+      <button class="btn btn-secondary" id="export-json-btn" onclick="exportJSON()" title="Exporter au format JSON">
+        { } JSON
+      </button>
+    </div>
+  </header>
+
+  <!-- ==========================================================================
+       2. BANDEAU DES KPIS DE PROSPECTION
+       ========================================================================== -->
+  <section class="kpi-strip" id="kpi-summary-strip">
+    <div class="kpi-card kpi-cyan" onclick="goView('clients')" style="cursor:pointer;" title="Voir les clients">
+      <div class="kpi-info">
+        <h4>En dépôt chez les libraires</h4>
+        <div class="kpi-value" id="kpi-stock-val">—</div>
+        <div class="kpi-subtext" id="kpi-stock-sub"></div>
+      </div>
+      <div class="kpi-icon-wrap" style="color:var(--accent-cyan-light);">📦</div>
+    </div>
+
+    <div class="kpi-card kpi-gold" onclick="goView('accueil')" style="cursor:pointer;" title="Voir ce qu'il reste à facturer">
+      <div class="kpi-info">
+        <h4>À facturer</h4>
+        <div class="kpi-value" id="kpi-facturer-val">—</div>
+        <div class="kpi-subtext" id="kpi-facturer-sub"></div>
+      </div>
+      <div class="kpi-icon-wrap" style="color:var(--accent-gold);">🧾</div>
+    </div>
+
+    <div class="kpi-card kpi-emerald" onclick="goView('accueil')" style="cursor:pointer;" title="Voir les impayés">
+      <div class="kpi-info">
+        <h4>Impayés</h4>
+        <div class="kpi-value" id="kpi-impayes-val">—</div>
+        <div class="kpi-subtext" id="kpi-impayes-sub"></div>
+      </div>
+      <div class="kpi-icon-wrap" style="color:var(--accent-emerald);">💶</div>
+    </div>
+
+    <div class="kpi-card kpi-indigo" onclick="goView('accueil')" style="cursor:pointer;" title="Voir les clients à appeler">
+      <div class="kpi-info">
+        <h4>À appeler</h4>
+        <div class="kpi-value" id="kpi-appeler-val">—</div>
+        <div class="kpi-subtext" id="kpi-appeler-sub"></div>
+      </div>
+      <div class="kpi-icon-wrap" style="color:var(--accent-indigo);">📞</div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       3. CONTRÔLES, FILTRES & SÉLECTION DE VUE
+       ========================================================================== -->
+  <section class="controls-container" id="controls-section">
+    <div class="controls-row-top">
+      <!-- Sélecteur d'Onglets de Vue -->
+      <div class="view-tabs" id="view-tabs-container">
+        <button class="view-tab-btn" data-view="accueil" id="tab-accueil">
+          🏠 Accueil
+        </button>
+        <button class="view-tab-btn" data-view="clients" id="tab-clients">
+          🤝 Clients
+        </button>
+        <button class="view-tab-btn active" data-view="map" id="tab-map">
+          🗺️ Carte
+        </button>
+        <button class="view-tab-btn" data-view="table" id="tab-table">
+          📋 Tableau
+        </button>
+        <button class="view-tab-btn" data-view="cards" id="tab-cards">
+          🗂️ Fiches Librairies
+        </button>
+        <button class="view-tab-btn" data-view="kanban" id="tab-kanban">
+          📊 Étapes de prospection
+        </button>
+        <button class="view-tab-btn" data-view="analytics" id="tab-analytics">
+          📈 Statistiques
+        </button>
+        <button class="view-tab-btn" data-view="france" id="tab-france">
+          🇫🇷 Panorama & Sources
+        </button>
+      </div>
+
+      <!-- Compteur dynamique de résultats -->
+      <div class="filter-badge-count" id="results-count-badge">
+        219 librairies
+      </div>
+    </div>
+
+    <!-- Ligne des Filtres Avancés -->
+    <div class="filter-group">
+      <!-- Région (options générées par app.js à partir de FRANCE_GEO) -->
+      <select class="filter-select" id="filter-region" title="Filtrer par région">
+        <option value="ALL">🇫🇷 Toutes les régions</option>
+      </select>
+
+      <!-- Département (options générées par app.js selon la région choisie) -->
+      <select class="filter-select" id="filter-department" title="Filtrer par département">
+        <option value="ALL">📍 Tous les départements</option>
+      </select>
+
+      <!-- Spécialité -->
+      <select class="filter-select" id="filter-specialty" title="Filtrer par spécialité / assortiment">
+        <option value="ALL">📖 Tous les assortiments</option>
+        <option value="EXCLUDE_JBM">🎯 Cible principale (Hors 100% BD / Mangas / Jeunesse)</option>
+        <option value="Généraliste">Généraliste (Littérature, Essais, Poches...)</option>
+        <option value="Jeunesse">Jeunesse & Albums</option>
+        <option value="BD et Mangas">BD, Mangas & Romans Graphiques</option>
+        <option value="Régionalisme">Régionalisme & Bretagne</option>
+        <option value="Imaginaire - Policier">Imaginaire & Policier</option>
+        <option value="Arts - Musées et Monuments">Beaux-Arts & Patrimoine</option>
+        <option value="SHS">Sciences Humaines & Sociales</option>
+        <option value="Religion">Religion & Spiritualité</option>
+        <option value="Mieux-être et spiritualité">Mieux-être</option>
+        <option value="VO">Versions Originales (VO)</option>
+        <option value="Autres">Autres spécialités</option>
+      </select>
+
+      <!-- Statut de Prospection Commerciale -->
+      <select class="filter-select" id="filter-status" title="Filtrer par statut commercial">
+        <option value="ALL">🎯 Tous les statuts commerciaux</option>
+        <option value="A_CONTACTER">📥 À Contacter</option>
+        <option value="CONTACTE">📞 Contacté</option>
+        <option value="CATALOGUE_ENVOYE">📖 Catalogue Envoyé</option>
+        <option value="RDV_PRIS">🤝 RDV / Visite Fixée</option>
+        <option value="CLIENT_ACTIF">⭐ Client Actif (Compte ouvert)</option>
+        <option value="A_RELANCER">⏰ À Relancer</option>
+      </select>
+
+      <!-- Tri -->
+      <select class="filter-select" id="filter-sort" title="Trier les résultats">
+        <option value="default">↕️ Tri par défaut</option>
+        <option value="name_asc">🔤 Nom de A à Z</option>
+        <option value="city_asc">🏘️ Commune de A à Z</option>
+      </select>
+
+      <!-- Tags d'Accès Rapide -->
+      <div class="quick-tags">
+        <span class="tag-chip chip-target" id="filter-exclude-jbm-chip" data-filter-type="excludeJBM" data-filter-val="TRUE" title="Exclure les librairies spécialisées à 100% en BD, Manga ou Jeunesse pour cibler la littérature générale et les assortiments mixtes">
+          🎯 Cible principale (Hors 100% BD/Manga/Jeunesse)
+        </span>
+        <span class="tag-chip chip-fav" id="filter-favorites-chip" data-filter-type="onlyFavorites" data-filter-val="TRUE" title="Afficher uniquement les librairies marquées en favoris">
+          ⭐ Favoris (<span id="fav-count-badge">0</span>)
+        </span>
+        <span class="tag-chip" data-filter-type="joignable" data-filter-val="OUI" title="Librairies dont on connaît un téléphone ou un email">
+          📞 Joignables
+        </span>
+        <span class="tag-chip chip-gold" data-filter-type="labelLir" data-filter-val="LIR">
+          ★ Label LIR uniquement
+        </span>
+        <span class="tag-chip" data-filter-type="priority" data-filter-val="HAUTE">
+          🔥 Priorité Haute
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==========================================================================
+       4. ZONE DES VUES (CONTENU PRINCIPAL)
+       ========================================================================== -->
+  <main class="main-view-container" id="main-content">
+
+    <!-- GESTION : ACCUEIL (ce qu'il y a à faire) et CLIENTS -->
+    <div class="view-section" id="view-accueil">
+      <div id="accueil-content"></div>
+    </div>
+    <div class="view-section" id="view-clients">
+      <div id="clients-content"></div>
+    </div>
+
+    <!-- VUE 1 : CARTE INTERACTIVE (Active par défaut) -->
+    <div class="view-section active-view" id="view-map">
+      <div id="map-view-container">
+        <div id="leaflet-map"></div>
+
+        <div class="map-floating-panel">
+          <strong style="font-size:0.8rem;color:var(--text-primary);display:block;margin-bottom:0.4rem;">
+            🗺️ Légende Prospection
+          </strong>
+          <div class="map-legend-item">
+            <span class="legend-dot" style="background:#10b981;"></span>
+            <span>Client Actif (Compte ouvert)</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="legend-dot" style="background:#f59e0b;"></span>
+            <span>RDV Pris / En négociation</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="legend-dot" style="background:#8b5cf6;"></span>
+            <span>Catalogue envoyé</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="legend-dot" style="background:#0284c7;"></span>
+            <span>Contacté</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="legend-dot" style="background:#f43f5e;"></span>
+            <span>À relancer</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="legend-dot" style="background:#6b7280;"></span>
+            <span>À contacter</span>
+          </div>
+          <div class="map-legend-item">
+            <span class="legend-dot" style="background:transparent;border:2px dashed var(--text-muted);"></span>
+            <span>Bord pointillé : position approximative (centre de la commune)</span>
+          </div>
+          <div style="margin-top:0.6rem;font-size:0.7rem;color:var(--text-muted);border-top:1px solid var(--border-subtle);padding-top:0.4rem;">
+            💡 <em>Cliquez sur une épingle pour ouvrir la fiche. Les chiffres regroupent plusieurs librairies proches : zoomez ou cliquez dessus.</em>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VUE 2 : TABLEAU CRM -->
+    <div class="view-section" id="view-table">
+      <div class="table-container">
+        <table class="crm-table">
+          <thead>
+            <tr>
+              <th>Librairie & Label</th>
+              <th>Commune & Dép.</th>
+              <th>Avis Google</th>
+              <th>Téléphone / Email</th>
+              <th>Statut Commercial</th>
+              <th>Priorité</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="crm-table-body">
+            <!-- Rempli dynamiquement par app.js -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- VUE 3 : GRILLE DE FICHES (CARDS STYLE GOOGLE MAPS) -->
+    <div class="view-section" id="view-cards">
+      <div class="cards-grid" id="bookstores-cards-container">
+        <!-- Rempli dynamiquement par app.js -->
+      </div>
+    </div>
+
+    <!-- VUE 4 : PIPELINE KANBAN -->
+    <div class="view-section" id="view-kanban">
+      <div class="kanban-board" id="kanban-board">
+        <!-- Rempli dynamiquement par app.js -->
+      </div>
+    </div>
+
+    <!-- VUE 5 : KPIS & ANALYSES DÉTAILLÉES -->
+    <div class="view-section" id="view-analytics">
+      <div id="analytics-content-container">
+        <!-- Rempli dynamiquement par app.js -->
+      </div>
+    </div>
+
+    <!-- VUE 6 : SOMMAIRE NATIONAL FRANCE -->
+    <div class="view-section" id="view-france">
+      <div id="france-content-container">
+        <!-- Rempli dynamiquement par app.js -->
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ==========================================================================
+       5. DRAWER LATÉRAL (FICHE DÉTAILLÉE GOOGLE MAPS & CRM PROSPECTION)
+       ========================================================================== -->
+  <div class="drawer-backdrop" id="drawer-backdrop">
+    <div class="crm-drawer" id="crm-drawer">
+      <div class="drawer-header">
+        <div class="drawer-title-group">
+          <h2 id="drawer-title">Nom de la Librairie</h2>
+          <div class="drawer-subtitle" id="drawer-sub">Commune, Spécialité</div>
+        </div>
+        <button class="drawer-close-btn" onclick="closeDrawer()" title="Fermer la fiche">✕</button>
+      </div>
+
+      <div class="drawer-content" id="drawer-content-body">
+        <!-- Injecté dynamiquement par app.js -->
+      </div>
+
+      <div class="drawer-footer">
+        <span id="drawer-save-hint" style="font-size:0.75rem;color:var(--text-muted);margin-right:auto;"></span>
+        <button class="btn btn-primary" onclick="closeDrawer()">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       6. MODAL GUIDE DE PROSPECTION COMMERCIALE EN LIBRAIRIE
+       ========================================================================== -->
+  <div class="modal-overlay" id="guide-modal" onclick="if(event.target===this) closeGuideModal()">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 style="font-family:var(--font-heading);font-weight:700;display:flex;align-items:center;gap:0.5rem;">
+          💡 Guide de Prospection Commerciale en Librairie
+        </h3>
+        <button class="drawer-close-btn" onclick="closeGuideModal()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:0.8rem;color:var(--text-muted);"><em>Conseils généraux, à adapter à votre maison d'édition et à vérifier selon votre expérience.</em></p>
+        <h4>1. Comprendre l'univers des librairies indépendantes</h4>
+        <p>
+          En France, le maillage des librairies est protégé par le prix unique du livre (Loi Lang de 1981). Les libraires reçoivent des centaines de sollicitations chaque semaine. Une prospection réussie repose sur la <strong>personnalisation</strong>, la <strong>connaissance de leur assortiment</strong> et le <strong>respect de leurs contraintes de temps</strong>.
+        </p>
+
+        <div class="guide-tip-box">
+          <strong>⏰ Les meilleurs moments pour contacter un libraire :</strong>
+          <br>Privilégiez les <strong>mardis et jeudis matin entre 9h30 et 11h30</strong>. Évitez absolument le samedi (jour de forte affluence client), le lundi (souvent fermé) et les périodes de grand rush (Rentrée Littéraire de septembre/octobre et fêtes de Noël).
+        </div>
+
+        <h4>2. Ce que recherche le libraire chez un éditeur</h4>
+        <ul>
+          <li><strong>Une adéquation éditoriale :</strong> Inutile de proposer un polar à une librairie 100% jeunesse ou bande dessinée. Utilisez les filtres d'assortiment de BIBLIO-PROSPECT.</li>
+          <li><strong>Des conditions commerciales claires :</strong>
+            <ul>
+              <li><strong>Remise libraire :</strong> Généralement entre 33% et 40% (35-38% est la norme pour la petite et moyenne édition indépendante).</li>
+              <li><strong>Distribution / Dilicom :</strong> Précisez si vos livres sont distribués par une structure reconnue (Hachette, MDS, Interforum, Sodis, Pollen, Daudin...) avec code GENCODE/DILICOM, ou si vous pratiquez le compte direct/dépôt-vente.</li>
+              <li><strong>Facilité de retour :</strong> Les libraires sont rassurés par la faculté de retour (office ou noté).</li>
+            </ul>
+          </li>
+          <li><strong>Un argument local :</strong> mettez en avant vos auteurs et sujets liés à la région de la librairie, et proposez des rencontres ou dédicaces en magasin.</li>
+        </ul>
+
+        <h4>3. La démarche étape par étape avec BIBLIO-PROSPECT</h4>
+        <ol style="padding-left:1.25rem;">
+          <li><strong>Cibler :</strong> Filtrez par département et par spécialité pour constituer une tournée logique.</li>
+          <li><strong>Compléter la fiche :</strong> les informations manquantes sont signalées « à récupérer » ou « à vérifier ». Utilisez « Chercher dans SIRENE » et les liens de recherche (Google Maps, PagesJaunes…) de la fiche, puis enregistrez.</li>
+          <li><strong>Premier contact :</strong> Utilisez le bouton "Préparer Email Démarcheur" ou téléphonez pour demander le nom du responsable du rayon concerné.</li>
+          <li><strong>Suivi :</strong> notez dans la fiche de la librairie son étape (à contacter, contactée, catalogue envoyé…) et la date de relance.</li>
+        </ol>
+      </div>
+      <div class="drawer-footer">
+        <button class="btn btn-primary" onclick="closeGuideModal()" style="margin-left:auto;">
+          J'ai compris
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==========================================================================
+       6. COMMUTATEUR DE THÈME EN COIN FLOTTANT (Clair / Sombre)
+       ========================================================================== -->
+  <div class="corner-theme-switch" id="corner-theme-switch" onclick="toggleTheme()" title="Basculer entre thème Sombre et Clair">
+    <span class="corner-theme-item" id="corner-theme-dark">🌙 Sombre</span>
+    <span class="corner-theme-divider">/</span>
+    <span class="corner-theme-item" id="corner-theme-light">☀️ Clair</span>
+  </div>
+
+  <!-- Conteneur des Toasts de Notification -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Leaflet JS pour la carte -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+
+  <!-- Script Principal de l'Application -->
+  <script src="js/suivi.js" charset="UTF-8"></script>
+  <script src="js/acces.js" charset="UTF-8"></script>
+  <script src="js/gestion.js" charset="UTF-8"></script>
+  <script src="js/app.js" charset="UTF-8"></script>
+
+</body>
+</html>
