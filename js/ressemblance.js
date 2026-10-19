@@ -49,6 +49,9 @@ const RESSEMBLANCE = {
 
 let _profil = null, _profilAt = 0;
 
+// À appeler quand la sauvegarde change (clients, ventes) : le profil sera recalculé
+function invaliderRessemblance() { _profil = null; }
+
 // Profil des meilleurs clients : pour chaque critère, la part des ventes par valeur (recalculé au plus toutes les 2 s)
 function profilRessemblance() {
   const now = Date.now();

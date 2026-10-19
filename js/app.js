@@ -2097,6 +2097,9 @@ const cloneItem = b => JSON.parse(JSON.stringify(b));
 
 function applySuiviToAll() {
   const entries = Suivi.all();
+  // Les clients et le profil de ressemblance dépendent de la sauvegarde : recalculés à chaque arrivée de données
+  state._clients = null;
+  if (typeof invaliderRessemblance === 'function') invaliderRessemblance();
   if (typeof synchroniserFichesManuelles === 'function') synchroniserFichesManuelles(entries);
   state.bookstores = [...state.baseById.values()].map(b => applySuivi(cloneItem(b), entries[b.id]));
 }
