@@ -1423,6 +1423,7 @@ function openDrawer(id) {
       <div class="drawer-section">
         <p style="font-size:0.8rem;">📋 <strong>Absente de la liste officielle du Ministère</strong> : librairie trouvée dans SIRENE (commerce de détail de livres, en activité${item.hors_liste.date_creation && item.hors_liste.date_creation > '1901' ? `, créée le ${formatDateFr(item.hors_liste.date_creation)}` : ''}).
         Assortiment et activité réelle à vérifier au premier contact.</p>
+        ${item.doublon_possible ? `<p class="data-check" style="font-size:0.8rem;">⚠️ Peut-être la même librairie que <a href="#" onclick="openDrawer(${Number(item.doublon_possible.id)}); return false;" style="color:var(--text-cyan);">« ${escapeHtml(item.doublon_possible.nom)} »</a> (nom proche dans la même commune, adresse différente) : à vérifier.</p>` : ''}
       </div>` : ''}
       ${client ? `
       <div class="drawer-section g-client-box">
