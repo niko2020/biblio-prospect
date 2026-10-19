@@ -1084,9 +1084,10 @@ body {
   font-weight: 700;
 }
 
+/* Boutons souples : jamais tronqués (« 📞 Coordonnées » est plus long que « 📞 Appel »), passage à la ligne si besoin */
 .card-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.4rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border-subtle);
@@ -1875,3 +1876,4 @@ body.scrolled .controls-container {
 .indicateur-chargement.actif { transform: translate(-50%, 0); opacity: 1; }
 .indicateur-rond { width: 0.9rem; height: 0.9rem; border-radius: 50%; border: 2px solid var(--border-subtle); border-top-color: var(--accent-gold); animation: tourne 0.8s linear infinite; }
 @keyframes tourne { to { transform: rotate(360deg); } }
+.card-actions > .btn { flex: 1 1 auto; white-space: nowrap; justify-content: center; text-align: center; }
