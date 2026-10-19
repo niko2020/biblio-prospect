@@ -1398,6 +1398,7 @@ function closeDrawer() {
   const backdrop = document.getElementById('drawer-backdrop');
   const wasOpen = backdrop && backdrop.classList.contains('active');
   if (backdrop) backdrop.classList.remove('active');
+  Suivi.flush(); // fiche fermée : envoi en ligne de ce qui a été modifié
   if (wasOpen && state.listDirty) {
     state.listDirty = false;
     applyFilters();
@@ -1881,7 +1882,7 @@ function setSuivi(id, patch) {
  */
 const SAVE_STATES = {
   local: { icon: '💾', text: 'Enregistré sur cet appareil', cls: 'save-wait' },
-  attente: { icon: '⏳', text: 'Enregistrement…', cls: 'save-wait' },
+  attente: { icon: '💾', text: 'Enregistré sur cet appareil (envoi en ligne à la fermeture de la fiche)', cls: 'save-wait' },
   synchro: { icon: '⏳', text: 'Enregistrement…', cls: 'save-wait' },
   ok: { icon: '☁️', text: 'Tout est enregistré', cls: 'save-ok' },
   hors_ligne: { icon: '📴', text: 'Hors ligne : enregistré sur cet appareil, envoi dès le retour d\'Internet', cls: 'save-wait' },

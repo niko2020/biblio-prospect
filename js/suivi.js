@@ -17,7 +17,9 @@ const Suivi = (() => {
   const CONFIG_KEY = 'biblio_suivi_config';
   const OLD_KEY = 'biblio_prospect_crm_mods'; // ancienne version (navigateur seul)
   const FILE = 'suivi.json';
-  const PUSH_DELAY_MS = 3000;
+  // Envoi vers GitHub aux moments naturels (fiche fermée, page quittée) et au plus tard après ce délai :
+  // chaque envoi = un commit, on évite donc d'en faire un par frappe (limites et taille de l'historique GitHub)
+  const PUSH_MAX_DELAY_MS = 120000;
   const RETRY_MS = 60000;
 
   const DEFAULT_CONFIG = { owner: 'niko2020', repo: 'biblio-prospect-donnees', token: '' };
@@ -271,7 +273,8 @@ const Suivi = (() => {
     busy = true;
     setStatus('synchro', 'Envoi…');
     const snapshot = snapshotOf();
-    const content = JSON.stringify({ version: 2, enregistre_le: new Date().toISOString(), librairies: local.data, gestion: local.gestion }, null, 1);
+    // Sans mise en forme : environ 30 % plus léger à chaque envoi et dans l'historique
+    const content = JSON.stringify({ version: 2, enregistre_le: new Date().toISOString(), librairies: local.data, gestion: local.gestion });
     try {
       const res = await api('PUT', {
         message: `Suivi : mise à jour du ${new Date().toLocaleString('fr-FR')}`,
@@ -309,8 +312,16 @@ const Suivi = (() => {
   function schedulePush() {
     if (!isConfigured()) { setStatus('non_configure'); return; }
     setStatus('attente', '');
+    // Un seul minuteur : il n'est pas relancé à chaque frappe, l'envoi part au plus tard après 2 minutes
+    if (!pushTimer) pushTimer = setTimeout(() => { pushTimer = null; push(); }, PUSH_MAX_DELAY_MS);
+  }
+
+  // Envoi immédiat de ce qui attend (fiche fermée, page quittée ou cachée)
+  function flush() {
+    if (!local.pending || !isConfigured()) return;
     clearTimeout(pushTimer);
-    pushTimer = setTimeout(() => push(), PUSH_DELAY_MS);
+    pushTimer = null;
+    push();
   }
 
   // Test de la clé saisie dans l'écran « Sauvegarde »
@@ -333,15 +344,18 @@ const Suivi = (() => {
 
   // Relances automatiques : retour de connexion, intervalle régulier, page de nouveau visible
   window.addEventListener('online', () => local.pending ? push() : pull());
-  setInterval(() => { if (local.pending) push(); }, RETRY_MS);
+  // Nouvel essai régulier seulement après un échec (hors ligne, erreur) : jamais d'envoi en continu
+  setInterval(() => { if (local.pending && ['hors_ligne', 'erreur'].includes(status.etat)) push(); }, RETRY_MS);
   document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
     if (document.visibilityState === 'visible' && isConfigured() && !local.pending) pull().then(changed => changed && Suivi.onRemoteChange && Suivi.onRemoteChange());
   });
   window.addEventListener('beforeunload', e => {
     // Les données sont déjà dans le navigateur ; on prévient seulement si l'envoi n'a pas eu lieu
-    if (local.pending && isConfigured()) { push(); }
+    flush();
   });
+  window.addEventListener('pagehide', () => flush());
 
-  return { all, update, collection, put, loadSnapshot, remapAliases, pull, push, onStatus, getConfig, setConfig, isConfigured, testConfig, historyUrl, onRemoteChange: null,
+  return { all, update, collection, put, flush, loadSnapshot, remapAliases, pull, push, onStatus, getConfig, setConfig, isConfigured, testConfig, historyUrl, onRemoteChange: null,
     pendingCount: () => (local.pending ? 1 : 0), lastSync: () => local.lastSync };
 })();
