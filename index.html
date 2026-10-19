@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
+  <!-- Version de l'outil : remplie lors de la publication (scripts/publier_page.js) ; « dev » ici -->
+  <meta name="version-outil" content="426d6e49248f">
   <title>BIBLIO-PROSPECT | Référentiel & Prospection Librairies de France</title>
   <meta name="description" content="Outil de prospection des librairies de France pour éditeurs : liste officielle du Ministère de la Culture, SIRET (SIRENE), coordonnées (OpenStreetMap), suivi commercial.">
 
@@ -18,7 +20,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 
   <!-- Feuille de Style Principale -->
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=426d6e49248f">
 </head>
 <body>
 
@@ -176,7 +178,6 @@
       <!-- Spécialité -->
       <select class="filter-select" id="filter-specialty" title="Filtrer par spécialité / assortiment">
         <option value="ALL">📖 Tous les assortiments</option>
-        <option value="EXCLUDE_JBM">🎯 Cible principale (Hors 100% BD / Mangas / Jeunesse)</option>
         <option value="Généraliste">Généraliste (Littérature, Essais, Poches...)</option>
         <option value="Jeunesse">Jeunesse & Albums</option>
         <option value="BD et Mangas">BD, Mangas & Romans Graphiques</option>
@@ -211,7 +212,7 @@
 
       <!-- Tags d'Accès Rapide -->
       <div class="quick-tags">
-        <span class="tag-chip chip-target" id="filter-exclude-jbm-chip" data-filter-type="excludeJBM" data-filter-val="TRUE" title="Exclure les librairies spécialisées à 100% en BD, Manga ou Jeunesse pour cibler la littérature générale et les assortiments mixtes">
+        <span class="tag-chip chip-target" id="filter-exclude-jbm-chip" data-filter-type="excludeJBM" data-filter-val="TRUE" title="Ma cible : garde les librairies qui ne sont pas 100 % BD / Manga / Jeunesse, et les classe par ressemblance avec vos meilleurs clients (les plus prometteuses d'abord)">
           🎯 Cible principale (Hors 100% BD/Manga/Jeunesse)
         </span>
         <span class="tag-chip chip-fav" id="filter-favorites-chip" data-filter-type="onlyFavorites" data-filter-val="TRUE" title="Afficher uniquement les librairies marquées en favoris">
@@ -433,11 +434,11 @@
 
 
   <!-- Script Principal de l'Application -->
-  <script src="js/suivi.js" charset="UTF-8"></script>
-  <script src="js/acces.js" charset="UTF-8"></script>
-  <script src="js/gestion.js" charset="UTF-8"></script>
-  <script src="js/ressemblance.js" charset="UTF-8"></script>
-  <script src="js/app.js" charset="UTF-8"></script>
+  <script src="js/suivi.js?v=426d6e49248f" charset="UTF-8"></script>
+  <script src="js/acces.js?v=426d6e49248f" charset="UTF-8"></script>
+  <script src="js/gestion.js?v=426d6e49248f" charset="UTF-8"></script>
+  <script src="js/ressemblance.js?v=426d6e49248f" charset="UTF-8"></script>
+  <script src="js/app.js?v=426d6e49248f" charset="UTF-8"></script>
 
 </body>
 </html>

@@ -105,14 +105,17 @@ function calculGestion() {
     if (lib && lib.etablissement_ferme && f.stockTotal > 0) {
       f.raisons.push({ type: 'ferme', texte: `🚪 Établissement fermé${lib.etablissement_ferme.date_fermeture ? ' le ' + formatDateFr(lib.etablissement_ferme.date_fermeture) : ''} (base officielle) : récupérer le stock` });
     }
-    const ruptures = Object.keys(f.vendus).filter(isbn => (f.stock[isbn] || 0) <= 0);
+    const ruptures = Object.keys(f.vendus).filter(isbn => (f.stock[isbn] || 0) === 0);
     if (ruptures.length) f.raisons.push({ type: 'rupture', texte: `📉 Rupture probable : ${ruptures.map(titre).join(', ')} (tout vendu)` });
+    // Stock négatif : plus de ventes et de retours que de dépôts enregistrés, ce n'est pas une rupture mais une saisie à vérifier
+    const negatifs = Object.keys(f.stock).filter(isbn => f.stock[isbn] < 0);
+    if (negatifs.length) f.raisons.push({ type: 'verifier', texte: `⚠️ Stock à vérifier : ${negatifs.map(isbn => `${titre(isbn)} (${f.stock[isbn]} ex.)`).join(', ')}, plus de ventes et retours que de dépôts enregistrés (un dépôt manque probablement)` });
     const bas = Object.keys(f.vendus).filter(isbn => (f.stock[isbn] || 0) > 0 && f.stock[isbn] <= Math.max(1, (f.deposes[isbn] || 0) * GESTION_REGLES.partStockBas));
     if (bas.length) f.raisons.push({ type: 'reassort', texte: `🔁 Vend bien, stock bas : proposer un réassort (${bas.map(titre).join(', ')})` });
     if (f.stockTotal > 0 && sansContact > GESTION_REGLES.joursSansContact) {
       f.raisons.push({ type: 'contact', texte: f.dernierContact ? `Pas de contact depuis le ${formatDateFr(f.dernierContact)}` : 'Aucun contact daté' });
     }
-    f.priorite = f.raisons.length ? Math.min(...f.raisons.map(r => ({ ferme: 0, rupture: 1, reassort: 2, contact: 3 })[r.type])) : 9;
+    f.priorite = f.raisons.length ? Math.min(...f.raisons.map(r => ({ ferme: 0, rupture: 1, reassort: 2, verifier: 3, contact: 4 })[r.type])) : 9;
     if (f.raisons.length && !(f.raisons.length === 1 && f.raisons[0].type === 'rupture' && f.stockTotal === 0 && sansContact <= GESTION_REGLES.joursSansContact)) aAppeler.push(f);
     if (f.ventesNonFacturees.length) aFacturer.push(f);
     for (const fa of f.facturesImpayees) {
@@ -185,7 +188,7 @@ function renderAccueilView() {
     <div class="g-grid">
       <section class="g-card">
         <h3>📞 À appeler <span class="g-count">${g.aAppeler.length}</span></h3>
-        <p class="g-help">Par ordre d'urgence : librairie fermée, rupture probable, réassort à proposer, puis pas de contact depuis plus de ${GESTION_REGLES.joursSansContact} jours (tour mensuel).</p>
+        <p class="g-help">Par ordre d'urgence : librairie fermée, rupture probable, réassort à proposer, stock à vérifier, puis pas de contact depuis plus de ${GESTION_REGLES.joursSansContact} jours (tour mensuel).</p>
         ${g.aAppeler.slice(0, 50).map(f => ligneClient(f, `${f.stockTotal} ex. · ${euros(f.valeurStock)}<br><span class="g-muted">${contactTxt(f)}</span>`, f.raisons)).join('') || '<p class="g-muted">Personne à appeler.</p>'}
       </section>
       <section class="g-card">
@@ -203,10 +206,10 @@ function renderAccueilView() {
     </div>
     <section class="g-card g-wide">
       <h3>🎯 Prospects à démarcher en premier <button class="g-info" onclick="openRessemblanceInfo()" title="Comment est calculée la ressemblance ?">ⓘ</button></h3>
-      <p class="g-help">Librairies qui ne sont pas encore clientes, classées par ressemblance avec celles où vos livres se vendent le mieux. Survolez la note pour le détail.</p>
+      <p class="g-help">Votre cible principale (librairies qui ne sont pas 100 % BD / Manga / Jeunesse, pas encore clientes), classée par ressemblance avec celles où vos livres se vendent le mieux. Survolez la note pour le détail.</p>
       ${(() => {
         const prospects = (typeof ressemblance === 'function' ? state.bookstores : [])
-          .filter(b => b.statut_prospection === 'A_CONTACTER')
+          .filter(b => b.statut_prospection === 'A_CONTACTER' && !isExclusivelyJBM(b))
           .map(b => ({ b, r: ressemblance(b) })).filter(x => x.r).sort((x, y) => y.r.score - x.r.score).slice(0, 15);
         return prospects.length ? `<div class="g-prospects">${prospects.map(({ b, r }) => `
           <button class="g-row" onclick="openDrawer(${b.id})">
@@ -296,7 +299,7 @@ function openClient(pid) {
 
   const titres = g.titres;
   const stockRows = Object.entries(f.stock).filter(([, q]) => q !== 0).map(([isbn, q]) => `
-    <tr><td>${escapeHtml(titres[isbn]?.titre || isbn)}</td><td style="text-align:right;${q < 0 ? 'color:var(--accent-rose);' : ''}">${q} ex.${q < 0 ? ' ⚠️' : ''}</td></tr>`).join('');
+    <tr><td>${escapeHtml(titres[isbn]?.titre || isbn)}</td><td style="text-align:right;${q < 0 ? 'color:var(--accent-rose);' : ''}"${q < 0 ? ' title="Stock à vérifier : plus de ventes et de retours que de dépôts enregistrés (un dépôt manque probablement, ou une saisie est en double)"' : ''}>${q} ex.${q < 0 ? ' ⚠️ à vérifier' : ''}</td></tr>`).join('');
 
   document.getElementById('drawer-content-body').innerHTML = `
     <div class="drawer-section">

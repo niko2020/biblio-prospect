@@ -135,6 +135,9 @@ function openRessemblanceInfo() {
         <button class="drawer-close-btn" onclick="document.getElementById('ressemblance-modal').classList.remove('active')">✕</button>
       </div>
       <div class="modal-body">
+        <p><strong>1. La cible principale (filtre)</strong> garde les librairies qui ne sont pas exclusivement BD, Manga ou Jeunesse
+        (catégories de la liste officielle). <strong>2. La ressemblance (classement)</strong> les range ensuite des plus prometteuses aux moins prometteuses.
+        L'étiquette « 🎯 Cible principale » fait les deux d'un coup.</p>
         <p>Chaque librairie qui n'est pas encore cliente reçoit une note de 0 à 100 : plus elle est haute, plus la librairie
         ressemble à celles où vos livres se vendent le mieux. Critères <strong>version ${RESSEMBLANCE.version}</strong> (${RESSEMBLANCE.date}), appelés à évoluer.</p>
         <p class="g-muted">Calculé à partir de <strong>${prof.meilleurs.length} clients</strong> reliés à une fiche librairie et ayant vendu au moins ${RESSEMBLANCE.minVentes} exemplaires

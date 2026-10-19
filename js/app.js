@@ -79,10 +79,59 @@ function startApp() {
   else if (ui.client && Suivi.collection('pdv')[ui.client]) openClient(ui.client);
   state.uiReady = true;
   saveUiState();
+  surveillerNouvelleVersion();
   // Récupère la sauvegarde en ligne (autre appareil, navigateur réinitialisé...) puis rafraîchit l'affichage
   if (Suivi.isConfigured()) {
     Suivi.pull().then(changed => { if (changed && Suivi.onRemoteChange) Suivi.onRemoteChange(); });
   }
+}
+
+/**
+ * Nouvelle version publiée pendant que l'outil est ouvert : un bandeau propose de rafraîchir.
+ * La page publiée porte sa version (balise « version-outil ») et le fichier version.txt donne celle en ligne.
+ * Rien à faire pour le dossier ouvert depuis l'ordinateur ni en test local (version « dev »).
+ */
+const VERSION_OUTIL = document.querySelector('meta[name="version-outil"]')?.content || 'dev';
+const VERIF_VERSION_MS = 5 * 60 * 1000;
+
+function surveillerNouvelleVersion() {
+  if (VERSION_OUTIL === 'dev' || !/^https?:$/.test(location.protocol)) return;
+  let signalee = false;
+  const verifier = async () => {
+    if (signalee) return;
+    try {
+      const res = await fetch(`version.txt?t=${Date.now()}`, { cache: 'no-store' });
+      if (!res.ok) return;
+      const enLigne = (await res.text()).trim();
+      if (enLigne && enLigne !== VERSION_OUTIL) { signalee = true; afficherBandeauVersion(); }
+    } catch (e) { /* hors ligne : on réessaiera */ }
+  };
+  setInterval(verifier, VERIF_VERSION_MS);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') verifier(); });
+  verifier();
+}
+
+function afficherBandeauVersion() {
+  if (document.getElementById('bandeau-version')) return;
+  const b = document.createElement('div');
+  b.id = 'bandeau-version';
+  b.className = 'bandeau-version';
+  b.innerHTML = `<span>🔄 Une nouvelle version de l'outil est disponible. Vos données restent enregistrées.</span>
+    <button type="button" class="btn">Rafraîchir</button>`;
+  b.querySelector('button').addEventListener('click', rafraichirOutil);
+  document.body.prepend(b);
+}
+
+// Enregistre tout (fiche ouverte, envoi en attente) avant de recharger la page
+async function rafraichirOutil(e) {
+  const btn = e && e.currentTarget;
+  if (btn) { btn.disabled = true; btn.textContent = 'Enregistrement…'; }
+  try {
+    flushDrawer();
+    saveUiState();
+    if (Suivi.isConfigured() && Suivi.pendingCount()) await Promise.race([Suivi.push(), new Promise(r => setTimeout(r, 15000))]);
+  } catch (err) { /* les données restent dans le navigateur et partiront au prochain chargement */ }
+  location.reload();
 }
 
 function showGate(message, loading) {
@@ -287,6 +336,7 @@ function setupEventListeners() {
   if (filterSort) {
     filterSort.addEventListener('change', (e) => {
       state.filters.sortBy = e.target.value;
+      state.triAuto = false;
       applyFilters();
       renderActiveView();
     });
@@ -304,6 +354,17 @@ function setupEventListeners() {
       } else if (filterType === 'excludeJBM') {
         state.filters.excludeJBM = !state.filters.excludeJBM;
         chip.classList.toggle('active', state.filters.excludeJBM);
+        // Cible principale = filtre (qui garder) ; la ressemblance classe ensuite (dans quel ordre),
+        // sauf si un autre tri a été choisi
+        if (state.filters.excludeJBM && state.filters.sortBy === 'default') {
+          state.filters.sortBy = 'ressemblance_desc';
+          state.triAuto = true;
+        } else if (!state.filters.excludeJBM && state.triAuto && state.filters.sortBy === 'ressemblance_desc') {
+          state.filters.sortBy = 'default';
+          state.triAuto = false;
+        }
+        const sortSel = document.getElementById('filter-sort');
+        if (sortSel) sortSel.value = state.filters.sortBy;
       } else {
         if (chip.classList.contains('active')) {
           chip.classList.remove('active');
@@ -1809,7 +1870,6 @@ function populateSpecialtySelect() {
   state.bookstores.forEach(b => (b.categories || [b.assortiment]).forEach(c => { counts[c] = (counts[c] || 0) + 1; }));
   select.innerHTML =
     '<option value="ALL">📖 Tous les assortiments</option>' +
-    '<option value="EXCLUDE_JBM">🎯 Cible principale (hors 100 % BD / Manga / Jeunesse)</option>' +
     Object.entries(counts).sort((a, b) => b[1] - a[1])
       .map(([c, n]) => `<option value="${escapeHtml(c)}">${escapeHtml(c)} (${n})</option>`).join('');
   select.value = state.filters.specialty;
@@ -2114,6 +2174,8 @@ function saveUiState() {
 function restoreUiState() {
   let ui = {};
   try { ui = JSON.parse(localStorage.getItem(UI_KEY) || '{}') || {}; } catch (e) { ui = {}; }
+  // Ancienne option « Cible principale » de la liste des assortiments : convertie en étiquette activée
+  if (ui.filters && ui.filters.specialty === 'EXCLUDE_JBM') { ui.filters.specialty = 'ALL'; ui.filters.excludeJBM = true; }
   if (ui.filters && typeof ui.filters === 'object') {
     for (const k of Object.keys(state.filters)) {
       if (ui.filters[k] !== undefined && typeof ui.filters[k] === typeof state.filters[k]) state.filters[k] = ui.filters[k];
