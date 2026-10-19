@@ -48,12 +48,13 @@ function calculGestion() {
   const anomalies = actifs(Suivi.collection('anomalies'));
 
   const parPdv = new Map();
+  const aujourdhui = today();
   const fiche = pid => {
     if (!parPdv.has(pid)) {
       parPdv.set(pid, {
         pdv: pdvs[pid] || { id: pid, nom: '(point de vente inconnu)' }, stock: {}, stockTotal: 0, valeurStock: 0,
         dernierContact: null, ventesNonFacturees: [], aFacturer: 0, facturesImpayees: [], impayes: 0,
-        totalVentes: 0, chiffreAffaires: 0, mouvements: [], factures: [], deposes: {}, vendus: {}, raisons: []
+        totalVentes: 0, chiffreAffaires: 0, mouvements: [], factures: [], deposes: {}, vendus: {}, raisons: [], datesFutures: []
       });
     }
     return parPdv.get(pid);
@@ -67,7 +68,9 @@ function calculGestion() {
     if (t && t.signe && m.isbn) f.stock[m.isbn] = (f.stock[m.isbn] || 0) + t.signe * (m.qte || 0);
     if (m.isbn && m.type === 'depot') f.deposes[m.isbn] = (f.deposes[m.isbn] || 0) + (m.qte || 0);
     if (m.isbn && m.type === 'vente') f.vendus[m.isbn] = (f.vendus[m.isbn] || 0) + (m.qte || 0);
-    if (m.date && (!f.dernierContact || m.date > f.dernierContact) && !m.date_approx) f.dernierContact = m.date;
+    // Une date dans le futur est une faute de frappe probable : elle ne compte pas comme dernier contact
+    if (m.date && !m.date_approx && m.date > aujourdhui) f.datesFutures.push(m);
+    else if (m.date && (!f.dernierContact || m.date > f.dernierContact) && !m.date_approx) f.dernierContact = m.date;
     if (m.type === 'vente') {
       f.totalVentes += m.qte || 0;
       if (!m.facture) f.ventesNonFacturees.push(m);
@@ -105,17 +108,40 @@ function calculGestion() {
     if (lib && lib.etablissement_ferme && f.stockTotal > 0) {
       f.raisons.push({ type: 'ferme', texte: `🚪 Établissement fermé${lib.etablissement_ferme.date_fermeture ? ' le ' + formatDateFr(lib.etablissement_ferme.date_fermeture) : ''} (base officielle) : récupérer le stock` });
     }
+    // Procédure collective publiée au BODACC : stock à récupérer, créance à déclarer (délais légaux)
+    const p = lib && lib.procedure;
+    if (p && typeof PROCEDURES !== 'undefined' && (PROCEDURES[p.type] || {}).grave && (f.stockTotal > 0 || f.facturesImpayees.length)) {
+      const d = PROCEDURES[p.type];
+      // Les délais courent depuis la publication du jugement d'ouverture
+      const pub = (p.ouverture && p.ouverture.date_parution) || p.date_parution;
+      const delai = mois => { const lim = plusMois(pub, mois); return `avant le ${formatDateFr(lim)}${lim < aujourdhui ? ', délai dépassé' : ''}`; };
+      const factures = f.facturesImpayees.map(fa => `${fa.numero}${fa.montant_net_ht != null ? ' ' + euros(fa.montant_net_ht) : ''}`).join(', ');
+      const actions = [];
+      if (p.type === 'cloture') {
+        actions.push("l'entreprise a probablement cessé son activité");
+        if (f.stockTotal > 0) actions.push(`récupérer les ${f.stockTotal} ex. en dépôt`);
+      } else {
+        if (f.facturesImpayees.length) actions.push(`déclarer la créance impayée (${factures}) au mandataire judiciaire (2 mois après la publication de l'ouverture : ${delai(2)})`);
+        if (f.stockTotal > 0) actions.push(`récupérer les ${f.stockTotal} ex. en dépôt, qui vous appartiennent (au besoin, demande de revendication : ${delai(3)})`);
+      }
+      f.raisons.push({ type: 'procedure', texte: `⚖️ ${d.long} depuis le ${formatDateFr(p.date_jugement)} (BODACC) : ${actions.join(' ; ')}. Délais à confirmer avec votre comptable.` });
+    }
     const ruptures = Object.keys(f.vendus).filter(isbn => (f.stock[isbn] || 0) === 0);
     if (ruptures.length) f.raisons.push({ type: 'rupture', texte: `📉 Rupture probable : ${ruptures.map(titre).join(', ')} (tout vendu)` });
     // Stock négatif : plus de ventes et de retours que de dépôts enregistrés, ce n'est pas une rupture mais une saisie à vérifier
     const negatifs = Object.keys(f.stock).filter(isbn => f.stock[isbn] < 0);
     if (negatifs.length) f.raisons.push({ type: 'verifier', texte: `⚠️ Stock à vérifier : ${negatifs.map(isbn => `${titre(isbn)} (${f.stock[isbn]} ex.)`).join(', ')}, plus de ventes et retours que de dépôts enregistrés (un dépôt manque probablement)` });
+    if (f.datesFutures.length) {
+      const dates = [...new Set(f.datesFutures.map(m => formatDateFr(m.date)))].join(', ');
+      const lignes = [...new Set(f.datesFutures.map(m => m.ligne_excel).filter(Boolean))];
+      f.raisons.push({ type: 'verifier', texte: `⚠️ Date dans le futur (${dates}) : faute de frappe ?${lignes.length ? ` Lignes ${lignes.join(', ')} du classeur.` : ''} Corrigez ou supprimez le mouvement dans l'historique.` });
+    }
     const bas = Object.keys(f.vendus).filter(isbn => (f.stock[isbn] || 0) > 0 && f.stock[isbn] <= Math.max(1, (f.deposes[isbn] || 0) * GESTION_REGLES.partStockBas));
     if (bas.length) f.raisons.push({ type: 'reassort', texte: `🔁 Vend bien, stock bas : proposer un réassort (${bas.map(titre).join(', ')})` });
     if (f.stockTotal > 0 && sansContact > GESTION_REGLES.joursSansContact) {
       f.raisons.push({ type: 'contact', texte: f.dernierContact ? `Pas de contact depuis le ${formatDateFr(f.dernierContact)}` : 'Aucun contact daté' });
     }
-    f.priorite = f.raisons.length ? Math.min(...f.raisons.map(r => ({ ferme: 0, rupture: 1, reassort: 2, verifier: 3, contact: 4 })[r.type])) : 9;
+    f.priorite = f.raisons.length ? Math.min(...f.raisons.map(r => ({ ferme: 0, procedure: 0, rupture: 1, reassort: 2, verifier: 3, contact: 4 })[r.type])) : 9;
     if (f.raisons.length && !(f.raisons.length === 1 && f.raisons[0].type === 'rupture' && f.stockTotal === 0 && sansContact <= GESTION_REGLES.joursSansContact)) aAppeler.push(f);
     if (f.ventesNonFacturees.length) aFacturer.push(f);
     for (const fa of f.facturesImpayees) {
@@ -137,6 +163,14 @@ function calculGestion() {
     kpis: { stockEx, stockValeur, totalAFacturer, totalImpayes, nbImpayes: impayes.length, nbEnRetard: impayes.filter(i => i.enRetard).length, nbAppeler: aAppeler.length },
     vide: !Object.keys(pdvs).length
   };
+}
+
+// Dernier commentaire d'un client (repris des colonnes « Commentaire » du classeur, ou saisi ici)
+function dernierCommentaireHtml(f) {
+  const m = (f.mouvements || []).find(m => m.commentaire && String(m.commentaire).trim());
+  if (!m) return '';
+  const quand = m.date ? `${formatDateFr(m.date)}${m.date_approx ? ' environ' : ''}` : 'date inconnue';
+  return `<div class="g-commentaire">💬 <strong>Dernier commentaire</strong> <span class="g-muted">(${quand}${m.periode ? ', ' + escapeHtml(m.periode) : ''})</span> : ${escapeHtml(m.commentaire)}</div>`;
 }
 
 // Point de vente relié à une fiche librairie de la prospection
@@ -184,26 +218,40 @@ function renderAccueilView() {
     </button>`;
   const contactTxt = f => f.dernierContact ? `dernier contact ${formatDateFr(f.dernierContact)}` : 'aucun contact daté';
 
+  // Tri choisi pour chaque colonne (retenu sur cet appareil)
+  const t = triAccueil();
+  const parNom = (a, b) => (a.pdv.nom || '').localeCompare(b.pdv.nom || '', 'fr');
+  const appeler = [...g.aAppeler];
+  if (t.appeler === 'nom') appeler.sort(parNom);
+  else if (t.appeler === 'contact') appeler.sort((a, b) => (a.dernierContact || '').localeCompare(b.dernierContact || ''));
+  else if (t.appeler === 'stock') appeler.sort((a, b) => b.valeurStock - a.valeurStock);
+  const facturer = [...g.aFacturer];
+  if (t.facturer === 'nom') facturer.sort(parNom);
+  const impayes = [...g.impayes];
+  if (t.impayes === 'montant') impayes.sort((a, b) => (b.facture.montant_net_ht || 0) - (a.facture.montant_net_ht || 0));
+  else if (t.impayes === 'nom') impayes.sort((a, b) => parNom(a.client, b.client));
+
   box.innerHTML = `
     <div class="g-grid">
       <section class="g-card">
-        <h3>📞 À appeler <span class="g-count">${g.aAppeler.length}</span></h3>
-        <p class="g-help">Par ordre d'urgence : librairie fermée, rupture probable, réassort à proposer, stock à vérifier, puis pas de contact depuis plus de ${GESTION_REGLES.joursSansContact} jours (tour mensuel).</p>
-        ${g.aAppeler.slice(0, 50).map(f => ligneClient(f, `${f.stockTotal} ex. · ${euros(f.valeurStock)}<br><span class="g-muted">${contactTxt(f)}</span>`, f.raisons)).join('') || '<p class="g-muted">Personne à appeler.</p>'}
+        <h3>📞 À appeler <span class="g-count">${g.aAppeler.length}</span>${selectTri('appeler')}</h3>
+        <p class="g-help">Par ordre d'urgence : librairie fermée ou en procédure collective, rupture probable, réassort à proposer, stock à vérifier, puis pas de contact depuis plus de ${GESTION_REGLES.joursSansContact} jours (tour mensuel).</p>
+        ${appeler.slice(0, 50).map(f => ligneClient(f, `${f.stockTotal} ex. · ${euros(f.valeurStock)}<br><span class="g-muted">${contactTxt(f)}</span>`, f.raisons)).join('') || '<p class="g-muted">Personne à appeler.</p>'}
       </section>
       <section class="g-card">
-        <h3>🧾 À facturer <span class="g-count">${g.aFacturer.length}</span></h3>
+        <h3>🧾 À facturer <span class="g-count">${g.aFacturer.length}</span>${selectTri('facturer')}</h3>
         <p class="g-help">Ventes déclarées par le libraire mais pas encore facturées.</p>
-        ${g.aFacturer.map(f => ligneClient(f, `${euros(f.aFacturer)} HT<br><span class="g-muted">${f.ventesNonFacturees.reduce((s, m) => s + (m.qte || 0), 0)} ex.</span>`)).join('') || '<p class="g-muted">Rien à facturer.</p>'}
+        ${facturer.map(f => ligneClient(f, `${euros(f.aFacturer)} HT<br><span class="g-muted">${f.ventesNonFacturees.reduce((s, m) => s + (m.qte || 0), 0)} ex.</span>`)).join('') || '<p class="g-muted">Rien à facturer.</p>'}
       </section>
       <section class="g-card">
-        <h3>💶 Impayés <span class="g-count">${g.impayes.length}</span></h3>
+        <h3>💶 Impayés <span class="g-count">${g.impayes.length}</span>${selectTri('impayes')}</h3>
         <p class="g-help">Factures non payées. Échéance : ${GESTION_REGLES.joursApresFinDeMois} jours fin de mois ; en orange, échéance dépassée (à relancer).</p>
-        ${g.impayes.slice(0, 60).map(({ facture, client, echeance, enRetard }) => ligneClient(client,
+        ${impayes.slice(0, 60).map(({ facture, client, echeance, enRetard }) => ligneClient(client,
           `${escapeHtml(facture.numero)} · ${facture.montant_net_ht != null ? euros(facture.montant_net_ht) : '<span class="data-check">montant ?</span>'}<br>
            <span class="${enRetard ? 'data-check' : 'g-muted'}">${echeance ? `${enRetard ? 'échue' : 'échéance'} le ${formatDateFr(echeance)}` : 'date de facture inconnue'}</span>`)).join('') || '<p class="g-muted">Aucun impayé.</p>'}
       </section>
     </div>
+    ${typeof appelsHtml === 'function' ? appelsHtml() : ''}
     <section class="g-card g-wide">
       <h3>🎯 Prospects à démarcher en premier <button class="g-info" onclick="openRessemblanceInfo()" title="Comment est calculée la ressemblance ?">ⓘ</button></h3>
       <p class="g-help">Votre cible principale (librairies qui ne sont pas 100 % BD / Manga / Jeunesse, pas encore clientes), classée par ressemblance avec celles où vos livres se vendent le mieux. Survolez la note pour le détail.</p>
@@ -234,6 +282,31 @@ function renderAccueilView() {
     </section>`;
 }
 
+// Tri des colonnes de l'Accueil
+const TRIS_ACCUEIL = {
+  appeler: { urgence: 'Par urgence', nom: 'Par nom', contact: 'Contact le plus ancien', stock: 'Valeur du stock' },
+  facturer: { montant: 'Par montant', nom: 'Par nom' },
+  impayes: { echeance: 'Par échéance', montant: 'Par montant', nom: 'Par nom' }
+};
+const TRI_ACCUEIL_KEY = 'biblio_tri_accueil';
+
+function triAccueil() {
+  const defaut = { appeler: 'urgence', facturer: 'montant', impayes: 'echeance' };
+  try { return { ...defaut, ...JSON.parse(localStorage.getItem(TRI_ACCUEIL_KEY) || '{}') }; } catch (e) { return defaut; }
+}
+
+function changerTriAccueil(col, valeur) {
+  const t = triAccueil();
+  t[col] = valeur;
+  try { localStorage.setItem(TRI_ACCUEIL_KEY, JSON.stringify(t)); } catch (e) { /* tri non retenu, sans conséquence */ }
+  renderAccueilView();
+}
+
+function selectTri(col) {
+  const t = triAccueil();
+  return `<select class="g-tri" onchange="changerTriAccueil('${col}', this.value)" title="Trier cette colonne">${Object.entries(TRIS_ACCUEIL[col]).map(([k, l]) => `<option value="${k}" ${t[col] === k ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+}
+
 function traiterAnomalie(id) {
   const a = Suivi.collection('anomalies')[id];
   if (!a) return;
@@ -254,7 +327,21 @@ function renderClientsView() {
     .filter(f => !q || [f.pdv.nom, ...(f.pdv.noms || []), f.pdv.ville].join(' ').toLowerCase().includes(q))
     .sort((a, b) => b.valeurStock - a.valeurStock || (a.pdv.nom || '').localeCompare(b.pdv.nom || '', 'fr'));
   const searchValue = document.getElementById('clients-search')?.value || '';
+  const propositions = q ? [] : propositionsRapprochement();
   box.innerHTML = `
+    ${propositions.length ? `
+    <section class="g-card" style="margin-bottom:1rem;">
+      <h3>🔗 Clients à relier à leur fiche librairie <span class="g-count">${propositions.length}</span></h3>
+      <p class="g-help">Fiches qui portent le même nom dans la même commune. Une fois reliée, la librairie passe en « Client actif » dans la prospection et compte pour la ressemblance.</p>
+      ${propositions.map(({ pdv, candidats }) => `
+        <div class="g-facture">
+          <span><strong>${escapeHtml(pdv.nom)}</strong> <span class="g-muted">${escapeHtml(pdv.ville || '')}</span></span>
+          <span class="g-facture-actions">
+            ${candidats.map(b => `<button class="btn btn-primary btn-sm" onclick="relierLibrairie('${escapeHtml(pdv.id)}', ${b.id})" title="${escapeHtml(b.adresse || '')}">Relier à ${escapeHtml(b.nom)} (${escapeHtml(b.commune)})</button>`).join('')}
+            <button class="btn btn-secondary btn-sm" onclick="refuserRapprochement('${escapeHtml(pdv.id)}', [${candidats.map(b => b.id).join(',')}])">${candidats.length > 1 ? 'Aucune des deux' : 'Ce n\'est pas elle'}</button>
+          </span>
+        </div>`).join('')}
+    </section>` : ''}
     <div class="g-toolbar">
       <input type="search" id="clients-search" class="form-control" placeholder="Rechercher un client…" value="${escapeHtml(searchValue)}" oninput="renderClientsView()">
       <button class="btn btn-primary" onclick="openNouveauClient()">+ Nouveau client</button>
@@ -302,6 +389,7 @@ function openClient(pid) {
     <tr><td>${escapeHtml(titres[isbn]?.titre || isbn)}</td><td style="text-align:right;${q < 0 ? 'color:var(--accent-rose);' : ''}"${q < 0 ? ' title="Stock à vérifier : plus de ventes et de retours que de dépôts enregistrés (un dépôt manque probablement, ou une saisie est en double)"' : ''}>${q} ex.${q < 0 ? ' ⚠️ à vérifier' : ''}</td></tr>`).join('');
 
   document.getElementById('drawer-content-body').innerHTML = `
+    ${dernierCommentaireHtml(f) ? `<div class="drawer-section">${dernierCommentaireHtml(f)}</div>` : ''}
     <div class="drawer-section">
       <h3>📦 Stock chez ce client</h3>
       ${stockRows ? `<table class="g-table">${stockRows}<tr><td><strong>Total</strong></td><td style="text-align:right;"><strong>${f.stockTotal} ex. · ${euros(f.valeurStock)} HT</strong></td></tr></table>`
@@ -328,13 +416,18 @@ function openClient(pid) {
           (commission ${Math.round(f.commission * 100)} %).
           <button class="btn btn-primary btn-sm" onclick="creerFacture('${pid}')">Créer la facture</button>
         </div>` : ''}
+      <p class="g-muted" style="font-size:0.72rem;">Numéro d'une nouvelle facture : le plus grand numéro de l'année + 1 (FF${today().slice(2, 4)}-…). « Modifier » permet de corriger la date, le montant ou le paiement, ou d'annuler une facture.</p>
+      <div id="g-facture-form"></div>
       ${f.factures.map(fa => `
         <div class="g-facture">
-          <span><strong>${escapeHtml(fa.numero)}</strong> · ${fa.montant_net_ht != null ? euros(fa.montant_net_ht) + ' HT' : '<span class="data-check">montant à vérifier</span>'}
+          <span><strong>${escapeHtml(fa.numero)}</strong> · ${fa.montant_net_ht != null ? euros(fa.montant_net_ht) + ' HT' : '<span class="data-check">montant à compléter</span>'}
             <span class="g-muted">· ${fa.date ? formatDateFr(fa.date) : 'date inconnue'}${!fa.payee && (fa.echeance || echeanceFacture(fa.date)) ? ` · échéance ${formatDateFr(fa.echeance || echeanceFacture(fa.date))}` : ''}</span>
             ${fa.controle ? `<div class="data-check" style="font-size:0.72rem;">${escapeHtml(fa.controle)}</div>` : ''}</span>
-          ${fa.payee ? `<span class="lvl lvl-verifie">✅ Payée${fa.date_paiement ? ' le ' + formatDateFr(fa.date_paiement) : ''}</span>`
-            : `<button class="btn btn-secondary btn-sm" onclick="marquerPayee('${escapeHtml(fa.numero)}')">Marquer payée</button>`}
+          <span class="g-facture-actions">
+            ${fa.payee ? `<span class="lvl lvl-verifie">✅ Payée${fa.date_paiement ? ' le ' + formatDateFr(fa.date_paiement) : ''}</span>`
+              : `<button class="btn btn-secondary btn-sm" onclick="formFacture('${escapeHtml(fa.numero)}', 'payer')">Marquer payée</button>`}
+            <button class="btn btn-secondary btn-sm" onclick="formFacture('${escapeHtml(fa.numero)}', 'modifier')" title="Corriger la date, le montant, le paiement, ou annuler la facture">Modifier</button>
+          </span>
         </div>`).join('') || '<p class="g-muted">Aucune facture.</p>'}
     </div>
 
@@ -347,7 +440,10 @@ function openClient(pid) {
             ${m.qte ? ` · ${m.qte} ex.` : ''}${m.titre ? ` · ${escapeHtml(m.titre)}` : ''}
             ${m.piece ? ` <span class="g-muted">${escapeHtml(m.piece)}</span>` : ''}${m.facture ? ` <span class="g-muted">→ ${escapeHtml(m.facture)}</span>` : ''}
             ${m.commentaire ? `<div class="g-muted">${escapeHtml(m.commentaire)}</div>` : ''}</span>
-          <button class="g-del" title="Supprimer ce mouvement" onclick="supprimerMouvement('${escapeHtml(m.id)}')">✕</button>
+          <span class="g-mvt-actions">
+            ${MVT_TYPES[m.type] ? `<button class="g-del" title="Modifier ce mouvement (date, quantité, commentaire)" onclick="formMouvement('${escapeHtml(m.pdv)}', '${m.type}', '${escapeHtml(m.id)}')">✎</button>` : ''}
+            <button class="g-del" title="Supprimer ce mouvement" onclick="supprimerMouvement('${escapeHtml(m.id)}')">✕</button>
+          </span>
         </div>`).join('') || '<p class="g-muted">Aucun mouvement.</p>'}
     </div>
 
@@ -409,42 +505,53 @@ function prochainNumero(prefixe) {
   return prefixe === 'FF' ? `FF${aa}-${n}` : `${prefixe}-${aa}-${n}`;
 }
 
-function formMouvement(pid, type) {
+// Formulaire de saisie d'un mouvement ; avec mvtId, modification d'un mouvement existant (date, quantité, commentaire…)
+function formMouvement(pid, type, mvtId) {
   const titres = Object.values(Suivi.collection('titres')).filter(t => !t.supprime).sort((a, b) => a.titre.localeCompare(b.titre, 'fr'));
+  const m = mvtId ? Suivi.collection('mouvements')[mvtId] : null;
   const avecTitre = ['depot', 'vente', 'retour'].includes(type);
-  const piece = type === 'depot' ? prochainNumero('BL') : type === 'retour' ? prochainNumero('BR') : '';
-  document.getElementById('g-form').innerHTML = `
+  const piece = m ? (m.piece || '') : type === 'depot' ? prochainNumero('BL') : type === 'retour' ? prochainNumero('BR') : '';
+  const box = document.getElementById('g-form');
+  box.innerHTML = `
     <div class="g-form">
-      <strong>${MVT_TYPES[type].icon} ${MVT_TYPES[type].label}</strong>
+      <strong>${MVT_TYPES[type].icon} ${m ? 'Modifier : ' : ''}${MVT_TYPES[type].label}</strong>
       <div class="g-form-grid">
-        <label>Date <input type="date" id="gf-date" class="form-control" value="${today()}"></label>
+        <label>Date <input type="date" id="gf-date" class="form-control" value="${escapeHtml(m ? (m.date || '') : today())}"></label>
         ${avecTitre ? `
-          <label>Titre <select id="gf-titre" class="form-control">${titres.map(t => `<option value="${escapeHtml(t.isbn)}">${escapeHtml(t.titre)}</option>`).join('')}</select></label>
-          <label>Exemplaires <input type="number" id="gf-qte" class="form-control" min="1" step="1" value="1"></label>` : ''}
-        ${piece ? `<label>N° de bon <input id="gf-piece" class="form-control" value="${piece}"></label>` : ''}
+          <label>Titre <select id="gf-titre" class="form-control">${titres.map(t => `<option value="${escapeHtml(t.isbn)}" ${m && m.isbn === t.isbn ? 'selected' : ''}>${escapeHtml(t.titre)}</option>`).join('')}</select></label>
+          <label>Exemplaires <input type="number" id="gf-qte" class="form-control" min="1" step="1" value="${m ? (m.qte || 1) : 1}"></label>` : ''}
+        ${piece || (m && avecTitre) ? `<label>N° de bon <input id="gf-piece" class="form-control" value="${escapeHtml(piece)}"></label>` : ''}
       </div>
-      <label>Commentaire <input id="gf-comm" class="form-control" placeholder="Facultatif"></label>
+      <label>Commentaire <input id="gf-comm" class="form-control" placeholder="Facultatif" value="${escapeHtml(m ? (m.commentaire || '') : '')}"></label>
+      ${m && m.facture ? `<p class="g-muted" style="font-size:0.72rem;">Ces ventes figurent sur la facture ${escapeHtml(m.facture)} : la facture elle-même n'est pas modifiée.</p>` : ''}
       <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem;">
         <button class="btn btn-secondary btn-sm" onclick="document.getElementById('g-form').innerHTML=''">Annuler</button>
-        <button class="btn btn-primary btn-sm" onclick="enregistrerMouvement('${pid}', '${type}')">Enregistrer</button>
+        <button class="btn btn-primary btn-sm" onclick="enregistrerMouvement('${pid}', '${type}'${m ? `, '${escapeHtml(m.id)}'` : ''})">Enregistrer</button>
       </div>
     </div>`;
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
-function enregistrerMouvement(pid, type) {
+function enregistrerMouvement(pid, type, mvtId) {
   const v = id => (document.getElementById(id)?.value || '').trim();
   const isbn = v('gf-titre');
   const qte = parseInt(v('gf-qte'), 10);
   if (['depot', 'vente', 'retour'].includes(type) && !(qte > 0)) { showToast("Indiquez un nombre d'exemplaires."); return; }
-  if (type === 'appel' && !v('gf-date')) { showToast('Indiquez la date.'); return; }
+  // Date obligatoire et réelle : jamais remplacée en silence par la date du jour
+  const date = dateValide(v('gf-date'));
+  if (!date) { showToast('Choisissez la date dans le calendrier.'); return; }
   const titre = Suivi.collection('titres')[isbn];
-  const id = 'mv-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-  Suivi.put('mouvements', id, {
-    type, pdv: pid, date: v('gf-date') || today(), isbn: isbn || undefined, titre: titre?.titre, qte: qte || undefined,
+  const avant = mvtId ? Suivi.collection('mouvements')[mvtId] : null;
+  const id = avant ? mvtId : 'mv-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const rec = {
+    ...(avant || { origine: 'outil' }),
+    type, pdv: pid, date, isbn: isbn || undefined, titre: titre?.titre, qte: qte || undefined,
     piece: v('gf-piece') || undefined, commentaire: v('gf-comm') || undefined,
-    prix_ht: type === 'vente' ? titre?.prix_ht : undefined, origine: 'outil'
-  });
-  showToast(`${MVT_TYPES[type].label} enregistré(e).`);
+    prix_ht: type === 'vente' ? (avant && avant.isbn === isbn && avant.prix_ht != null ? avant.prix_ht : titre?.prix_ht) : undefined
+  };
+  if (avant && avant.date !== date) delete rec.date_approx; // date précisée à la main
+  Suivi.put('mouvements', id, rec);
+  showToast(`${MVT_TYPES[type].label} ${avant ? 'modifié(e)' : 'enregistré(e)'}.`);
   refreshGestion(true, pid);
 }
 
@@ -474,15 +581,120 @@ function creerFacture(pid) {
   refreshGestion(true, pid);
 }
 
-function marquerPayee(numero) {
+// Date saisie dans un calendrier (AAAA-MM-JJ) : renvoie la date si elle existe vraiment, sinon null
+function dateValide(v) {
+  const s = String(v || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = new Date(s + 'T00:00:00Z');
+  return !isNaN(d) && d.toISOString().slice(0, 10) === s ? s : null;
+}
+
+// Montant tapé à la française (« 153,94 », « 1 234,50 € ») : nombre, ou null si illisible
+function montantValide(v) {
+  const s = String(v || '').replace(/[\s €]/g, '').replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return null;
+  return Math.round(parseFloat(s) * 100) / 100;
+}
+
+// Montant net calculé d'après les lignes de la facture (à comparer avec la facture papier)
+function montantDesLignes(fa) {
+  if (!fa.lignes || !fa.lignes.length) return null;
+  const pdv = Suivi.collection('pdv')[fa.pdv] || {};
+  const commission = fa.commission ?? pdv.commission ?? GESTION_REGLES.commissionParDefaut;
+  const brut = fa.lignes.reduce((s, l) => s + (l.qte || 0) * (l.prix_ht || 0), 0);
+  return { net: Math.round(brut * (1 - commission) * 100) / 100, commission };
+}
+
+// Formulaire dans la fiche client : « payer » (date de paiement) ou « modifier » (date, montant, paiement, annulation)
+function formFacture(numero, mode) {
+  const fa = Suivi.collection('factures')[numero];
+  const box = document.getElementById('g-facture-form');
+  if (!fa || !box) return;
+  const calc = montantDesLignes(fa);
+  const n = escapeHtml(numero);
+  box.innerHTML = mode === 'payer' ? `
+    <div class="g-form">
+      <strong>✅ Paiement de la facture ${n}</strong>
+      <div class="g-form-grid">
+        <label>Date du paiement <input type="date" id="gff-paiement" class="form-control" value="${today()}"></label>
+      </div>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.5rem;">
+        <button class="btn btn-secondary btn-sm" onclick="document.getElementById('g-facture-form').innerHTML=''">Annuler</button>
+        <button class="btn btn-primary btn-sm" onclick="enregistrerFacture('${n}', 'payer')">Enregistrer</button>
+      </div>
+    </div>` : `
+    <div class="g-form">
+      <strong>✏️ Facture ${n}</strong>
+      <div class="g-form-grid">
+        <label>Date de la facture <input type="date" id="gff-date" class="form-control" value="${escapeHtml(fa.date || '')}"></label>
+        <label>Montant net HT (€) <input type="text" inputmode="decimal" id="gff-montant" class="form-control" value="${fa.montant_net_ht != null ? String(fa.montant_net_ht).replace('.', ',') : ''}" placeholder="ex. 153,94"></label>
+      </div>
+      ${calc ? `<p class="g-muted" style="font-size:0.72rem;">D'après les lignes de la facture : ${euros(calc.net)} HT (commission ${Math.round(calc.commission * 100)} %). Vérifiez sur votre facture avant de reporter ce montant.</p>` : ''}
+      <div class="g-form-grid">
+        <label style="flex-direction:row;align-items:center;gap:0.4rem;"><input type="checkbox" id="gff-payee" ${fa.payee ? 'checked' : ''}> Payée</label>
+        <label>Date du paiement <input type="date" id="gff-paiement" class="form-control" value="${escapeHtml(fa.date_paiement || '')}"></label>
+      </div>
+      <div style="display:flex;gap:0.5rem;justify-content:space-between;flex-wrap:wrap;margin-top:0.5rem;">
+        <button class="btn btn-secondary btn-sm g-danger" onclick="annulerFacture('${n}')" title="Seulement pour une facture qui n'a pas été envoyée">🗑️ Annuler cette facture</button>
+        <span style="display:flex;gap:0.5rem;">
+          <button class="btn btn-secondary btn-sm" onclick="document.getElementById('g-facture-form').innerHTML=''">Fermer</button>
+          <button class="btn btn-primary btn-sm" onclick="enregistrerFacture('${n}', 'modifier')">Enregistrer</button>
+        </span>
+      </div>
+    </div>`;
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function enregistrerFacture(numero, mode) {
   const fa = Suivi.collection('factures')[numero];
   if (!fa) return;
-  const date = prompt(`Date du paiement de la facture ${numero} (JJ/MM/AAAA) :`, formatDateFr(today()));
-  if (date === null) return;
-  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(date.trim());
-  const iso = m ? `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}` : today();
-  Suivi.put('factures', numero, { ...fa, payee: true, date_paiement: iso });
-  showToast(`Facture ${numero} marquée payée.`);
+  const v = id => (document.getElementById(id)?.value || '').trim();
+  const next = { ...fa };
+  if (mode === 'payer') {
+    const p = dateValide(v('gff-paiement'));
+    if (!p) { showToast('Choisissez la date du paiement dans le calendrier.'); return; }
+    Object.assign(next, { payee: true, date_paiement: p });
+  } else {
+    const d = v('gff-date');
+    if (d && !dateValide(d)) { showToast('Date de la facture invalide.'); return; }
+    const montantTxt = v('gff-montant');
+    const montant = montantTxt ? montantValide(montantTxt) : null;
+    if (montantTxt && montant == null) { showToast('Montant illisible : tapez par exemple 153,94'); return; }
+    const payee = !!document.getElementById('gff-payee')?.checked;
+    const p = v('gff-paiement');
+    if (payee && p && !dateValide(p)) { showToast('Date du paiement invalide.'); return; }
+    if (d) Object.assign(next, { date: d, echeance: echeanceFacture(d), annee: parseInt(d.slice(0, 4), 10) });
+    next.montant_net_ht = montant;
+    if (montant != null && fa.origine === 'outil') {
+      next.tva = Math.round(montant * 0.055 * 100) / 100;
+      next.montant_ttc = Math.round(montant * 1.055 * 100) / 100;
+    }
+    next.payee = payee;
+    if (payee) next.date_paiement = p || fa.date_paiement || null;
+    else delete next.date_paiement;
+  }
+  Suivi.put('factures', numero, next);
+  // Montant complété : le point « montant absent » de la reprise du classeur est réglé
+  if (next.montant_net_ht != null && fa.montant_net_ht == null) {
+    actifs(Suivi.collection('anomalies'))
+      .filter(a => a.sujet === numero && a.statut !== 'traitee' && /montant/i.test(a.message || ''))
+      .forEach(a => Suivi.put('anomalies', a.id, { ...a, statut: 'traitee', traitee_le: today(), traitee_par: 'montant saisi dans la facture' }));
+  }
+  showToast(`Facture ${numero} enregistrée.`);
+  refreshGestion(true, fa.pdv);
+}
+
+// Annulation d'une facture créée par erreur : ses ventes redeviennent « à facturer » (récupérable dans l'historique)
+function annulerFacture(numero) {
+  const fa = Suivi.collection('factures')[numero];
+  if (!fa) return;
+  if (!confirm(`Annuler la facture ${numero} ?\n\nÀ faire seulement si elle n'a pas été envoyée au libraire : une facture envoyée s'annule par un avoir.\n\nLes ventes qu'elle contient redeviennent « à facturer ». Rien n'est perdu : la facture reste dans l'historique de la sauvegarde.`)) return;
+  for (const m of actifs(Suivi.collection('mouvements')).filter(m => m.facture === numero)) {
+    const { facture, ...reste } = m;
+    Suivi.put('mouvements', m.id, reste);
+  }
+  Suivi.put('factures', numero, { ...fa, supprime: true, annulee: true, supprime_le: today() });
+  showToast(`Facture ${numero} annulée : ses ventes sont de nouveau « à facturer ».`);
   refreshGestion(true, fa.pdv);
 }
 
@@ -515,6 +727,49 @@ function chercherLibrairie(pid) {
       <button class="btn btn-primary btn-sm" onclick="relierLibrairie('${pid}', ${b.id})">Relier</button></div>`).join('') || '<p class="g-muted">Aucune librairie trouvée : essayez un autre mot ou la commune.</p>';
 }
 
+/**
+ * Rapprochements proposés : client pas encore relié ↔ fiche librairie de même nom dans la même commune
+ * (ou le même code postal). Testé sur les clients déjà reliés : la bonne fiche est retrouvée 49 fois sur 50,
+ * la 50e étant un cas de deux librairies homonymes dans la même ville : on montre alors les deux.
+ */
+const MOTS_VIDES = new Set(['librairie', 'libraire', 'les', 'des', 'the', 'sur', 'aux', 'maison', 'presse', 'sas', 'sarl']);
+
+function propositionsRapprochement() {
+  const mots = s => normTxt(s).split(' ').filter(w => w.length > 2 && !MOTS_VIDES.has(w));
+  const pris = new Set(actifs(Suivi.collection('pdv')).filter(p => p.librairie_id).map(p => p.librairie_id));
+  const res = [];
+  for (const pdv of actifs(Suivi.collection('pdv')).filter(p => !p.librairie_id)) {
+    const ville = normTxt(pdv.ville);
+    const cp = String(pdv.code_postal || '');
+    const refuses = new Set(pdv.rapprochements_refuses || []);
+    const listeMots = [pdv.nom, ...(pdv.noms || [])].map(mots).filter(m => m.length);
+    if (!listeMots.length || (!ville && cp.length !== 5)) continue;
+    const trouves = [];
+    for (const b of state.bookstores) {
+      if (pris.has(b.id) || refuses.has(b.id) || b.statut_prospection === 'FERMEE') continue;
+      const commune = normTxt(b.commune);
+      const memeLieu = (cp.length === 5 && b.code_postal === cp) || (ville && commune && (commune === ville || ` ${ville} `.includes(` ${commune} `) || ` ${commune} `.includes(` ${ville} `)));
+      if (!memeLieu) continue;
+      const txt = ` ${normTxt([b.nom, ...(b.autres_noms || []), b.nom_officiel].join(' '))} `;
+      const part = Math.max(...listeMots.map(m => m.filter(w => txt.includes(` ${w} `)).length / m.length));
+      if (part >= 0.6) trouves.push({ b, part });
+    }
+    if (!trouves.length) continue;
+    trouves.sort((x, y) => y.part - x.part);
+    // Deux fiches aussi ressemblantes l'une que l'autre : on laisse choisir
+    const candidats = trouves.filter(x => x.part >= trouves[0].part - 0.01).slice(0, 2).map(x => x.b);
+    res.push({ pdv, candidats });
+  }
+  return res;
+}
+
+function refuserRapprochement(pid, ids) {
+  const pdv = Suivi.collection('pdv')[pid];
+  if (!pdv) return;
+  Suivi.put('pdv', pid, { ...pdv, rapprochements_refuses: [...new Set([...(pdv.rapprochements_refuses || []), ...ids])] });
+  renderClientsView();
+}
+
 function relierLibrairie(pid, librairieId) {
   const pdv = Suivi.collection('pdv')[pid];
   if (!pdv) return;
@@ -525,7 +780,8 @@ function relierLibrairie(pid, librairieId) {
   state._clients = null; // cache des clients reliés
   showToast(librairieId ? 'Client relié à sa fiche librairie.' : 'Lien supprimé.');
   refreshGestion(true, pid);
-  if (typeof applyFilters === 'function') { applyFilters(); }
+  // Le statut « Client actif » des fiches librairies dépend des liens
+  if (typeof applySuiviToAll === 'function') { applySuiviToAll(); applyFilters(); }
 }
 
 // Fusion de deux fiches client : tout ce qui concerne « source » passe sur « cible », la source est retirée

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <!-- Version de l'outil : remplie lors de la publication (scripts/publier_page.js) ; « dev » ici -->
-  <meta name="version-outil" content="426d6e49248f">
+  <meta name="version-outil" content="575364917435">
   <title>BIBLIO-PROSPECT | Référentiel & Prospection Librairies de France</title>
   <meta name="description" content="Outil de prospection des librairies de France pour éditeurs : liste officielle du Ministère de la Culture, SIRET (SIRENE), coordonnées (OpenStreetMap), suivi commercial.">
 
@@ -20,7 +20,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
 
   <!-- Feuille de Style Principale -->
-  <link rel="stylesheet" href="css/style.css?v=426d6e49248f">
+  <link rel="stylesheet" href="css/style.css?v=575364917435">
 </head>
 <body>
 
@@ -71,6 +71,14 @@
 
       <button class="btn btn-secondary" id="open-guide-btn" onclick="openGuideModal()" title="Consulter le guide de prospection en librairie">
         💡 Guide Prospection
+      </button>
+
+      <button class="btn btn-secondary" id="nouvelle-fiche-btn" onclick="ouvrirNouvelleFiche()" title="Ajouter un point de vente absent des listes (concept store, librairie récente…)">
+        ➕ Nouvelle fiche
+      </button>
+
+      <button class="btn btn-secondary" id="copier-emails-btn" onclick="copierEmails()" title="Copier les emails des librairies affichées (avec vos filtres), à coller en copie cachée (Cci) pour un envoi groupé">
+        📋 Copier les emails
       </button>
 
       <button class="btn btn-gold" id="export-csv-btn" onclick="exportCSV()" title="Exporter en CSV (compatible Microsoft Excel)">
@@ -200,6 +208,7 @@
         <option value="RDV_PRIS">🤝 RDV / Visite Fixée</option>
         <option value="CLIENT_ACTIF">⭐ Client Actif (Compte ouvert)</option>
         <option value="A_RELANCER">⏰ À Relancer</option>
+        <option value="FERMEE">🚪 Fermée (masquées des listes)</option>
       </select>
 
       <!-- Tri -->
@@ -220,6 +229,12 @@
         </span>
         <span class="tag-chip" data-filter-type="joignable" data-filter-val="OUI" title="Librairies dont on connaît un téléphone ou un email">
           📞 Joignables
+        </span>
+        <span class="tag-chip" data-filter-type="origine" data-filter-val="OFFICIELLE" title="Seulement les librairies de la liste officielle du Ministère de la Culture">
+          📋 Liste officielle
+        </span>
+        <span class="tag-chip" data-filter-type="origine" data-filter-val="HORS_LISTE" title="Seulement les librairies trouvées dans SIRENE mais absentes de la liste officielle (ouvertures récentes, petites librairies… activité à vérifier)">
+          🆕 Hors liste
         </span>
         <span class="tag-chip chip-gold" data-filter-type="labelLir" data-filter-val="LIR">
           ★ Label LIR uniquement
@@ -434,11 +449,13 @@
 
 
   <!-- Script Principal de l'Application -->
-  <script src="js/suivi.js?v=426d6e49248f" charset="UTF-8"></script>
-  <script src="js/acces.js?v=426d6e49248f" charset="UTF-8"></script>
-  <script src="js/gestion.js?v=426d6e49248f" charset="UTF-8"></script>
-  <script src="js/ressemblance.js?v=426d6e49248f" charset="UTF-8"></script>
-  <script src="js/app.js?v=426d6e49248f" charset="UTF-8"></script>
+  <script src="js/suivi.js?v=575364917435" charset="UTF-8"></script>
+  <script src="js/acces.js?v=575364917435" charset="UTF-8"></script>
+  <script src="js/gestion.js?v=575364917435" charset="UTF-8"></script>
+  <script src="js/ressemblance.js?v=575364917435" charset="UTF-8"></script>
+  <script src="js/fiches.js?v=575364917435" charset="UTF-8"></script>
+  <script src="js/appels.js?v=575364917435" charset="UTF-8"></script>
+  <script src="js/app.js?v=575364917435" charset="UTF-8"></script>
 
 </body>
 </html>

@@ -21,6 +21,7 @@ const state = {
     onlyFavorites: false,
     excludeJBM: false,
     joignable: 'ALL',
+    origine: 'ALL', // ALL, OFFICIELLE (liste du Ministère), HORS_LISTE (trouvées dans SIRENE)
     sortBy: 'default'
   },
   mapInstance: null,
@@ -477,6 +478,54 @@ function getScopeLabel() {
  * une autre catégorie (Généraliste, Autres, Religion...) reste dans la cible.
  */
 const JBM_CATEGORIES = ['Jeunesse', 'BD et Mangas'];
+/**
+ * Procédures collectives publiées au BODACC (données mises à jour chaque mois)
+ */
+const PROCEDURES = {
+  liquidation: { court: 'Liquidation', long: 'En liquidation judiciaire', grave: true },
+  cloture: { court: 'Procédure close', long: 'Procédure collective clôturée', grave: true },
+  redressement: { court: 'Redressement', long: 'En redressement judiciaire', grave: true },
+  plan_redressement: { court: 'Plan de redressement', long: 'Plan de redressement en cours', grave: false },
+  sauvegarde: { court: 'Sauvegarde', long: 'En procédure de sauvegarde', grave: true },
+  plan_sauvegarde: { court: 'Plan de sauvegarde', long: 'Plan de sauvegarde en cours', grave: false },
+  autre: { court: 'Procédure', long: 'Procédure collective', grave: false }
+};
+
+function procedureBadge(item) {
+  const p = item && item.procedure;
+  if (!p) return '';
+  const d = PROCEDURES[p.type] || PROCEDURES.autre;
+  return `<span class="badge-procedure${d.grave ? ' grave' : ''}" title="${escapeHtml(`${d.long} : ${p.nature} (jugement du ${formatDateFr(p.date_jugement)}, ${p.tribunal}). Source : BODACC.`)}">⚖️ ${d.court}</span>`;
+}
+
+function horsListeBadge(item) {
+  if (!item || !item.hors_liste) return '';
+  return '<span class="badge-hors-liste" title="Absente de la liste officielle du Ministère : trouvée dans SIRENE (commerce de détail de livres en activité). Activité réelle à vérifier.">Hors liste</span>';
+}
+
+// Date + n mois (délais légaux des créanciers), au format AAAA-MM-JJ
+function plusMois(iso, n) {
+  if (!iso) return null;
+  const d = new Date(iso + 'T12:00:00');
+  d.setMonth(d.getMonth() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+function procedureEncadre(item) {
+  const p = item.procedure;
+  if (!p) return '';
+  const d = PROCEDURES[p.type] || PROCEDURES.autre;
+  const url = p.annonce ? `https://www.bodacc.fr/pages/annonces-commerciales-detail/?q.id=id:${encodeURIComponent(p.annonce)}` : 'https://www.bodacc.fr/';
+  return `
+    <div class="drawer-section g-procedure${d.grave ? ' grave' : ''}">
+      <h3>⚖️ ${escapeHtml(d.long)}</h3>
+      <p>${escapeHtml(p.nature)} : jugement du ${formatDateFr(p.date_jugement)} (${escapeHtml(p.tribunal || 'tribunal non précisé')}), publié au BODACC le ${formatDateFr(p.date_parution)}.
+        <a href="${url}" target="_blank" rel="noopener" style="color:var(--text-cyan);">Voir l'annonce ↗</a></p>
+      ${p.ouverture && p.ouverture.date_parution !== p.date_parution ? `<p>Procédure ouverte le ${formatDateFr(p.ouverture.date_jugement)} (${escapeHtml(p.ouverture.nature)}, publiée le ${formatDateFr(p.ouverture.date_parution)}).</p>` : ''}
+      <p class="g-muted" style="font-size:0.72rem;">Source officielle : BODACC, consulté le ${formatDateFr(p.consulte_le)}.</p>
+    </div>`;
+}
+
 function isExclusivelyJBM(item) {
   const cats = item.categories && item.categories.length ? item.categories : [item.assortiment];
   return cats.every(c => JBM_CATEGORIES.includes(c));
@@ -539,13 +588,18 @@ function applyFilters() {
     if (f.labelLir === 'LIR' && !item.is_lir) return false;
     if (f.labelLir === 'NON_LIR' && item.is_lir) return false;
 
-    // Filtre Statut commercial
+    // Filtre Statut commercial (les librairies marquées « Fermée » n'apparaissent que si on les demande)
+    if (item.statut_prospection === 'FERMEE' && f.status !== 'FERMEE') return false;
     if (f.status !== 'ALL' && item.statut_prospection !== f.status) {
       return false;
     }
 
     // Filtre « joignable » : téléphone ou email connu
     if (f.joignable === 'OUI' && !item.telephone && !item.email) return false;
+
+    // Origine : liste officielle du Ministère, ou librairies trouvées seulement dans SIRENE
+    if (f.origine === 'OFFICIELLE' && item.hors_liste) return false;
+    if (f.origine === 'HORS_LISTE' && !item.hors_liste) return false;
 
     // Filtre Priorité
     if (f.priority !== 'ALL' && item.priorite !== f.priority) {
@@ -793,7 +847,7 @@ function renderMapView() {
             <button class="btn-fav-inline ${item.is_favorite ? 'active' : ''}" onclick="toggleFavorite(${item.id}, event)" title="${item.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
               ${item.is_favorite ? '⭐' : '☆'}
             </button>
-            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${ressemblanceBadge(item)}
+            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${procedureBadge(item)}${horsListeBadge(item)}${ressemblanceBadge(item)}
           </div>
         </div>
         <h4 class="popup-title" style="margin-top:0.3rem;">${escapeHtml(item.nom)}</h4>
@@ -871,7 +925,7 @@ function renderTableView() {
             <span class="cell-name" onclick="openDrawer(${item.id})">${escapeHtml(item.nom)}</span>
           </div>
           <div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;margin-left:1.4rem;margin-top:0.2rem;">
-            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${ressemblanceBadge(item)}
+            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${procedureBadge(item)}${horsListeBadge(item)}${ressemblanceBadge(item)}
             ${(item.categories || [item.assortiment]).map(cat => `
               <span class="badge-specialty-mini">${escapeHtml(cat)}</span>
             `).join('')}
@@ -937,7 +991,7 @@ function renderCardsView() {
             <button class="btn-fav ${item.is_favorite ? 'active' : ''}" onclick="toggleFavorite(${item.id}, event)" title="${item.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
               ${item.is_favorite ? '⭐' : '☆'}
             </button>
-            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${ressemblanceBadge(item)}
+            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${procedureBadge(item)}${horsListeBadge(item)}${ressemblanceBadge(item)}
           </div>
         </div>
 
@@ -992,7 +1046,7 @@ function renderKanbanView() {
   const kanbanBoard = document.getElementById('kanban-board');
   if (!kanbanBoard) return;
 
-  kanbanBoard.innerHTML = STATUS_OPTIONS.map(col => {
+  kanbanBoard.innerHTML = STATUS_OPTIONS.filter(s => s.key !== 'FERMEE' || state.filters.status === 'FERMEE').map(col => {
     const colItems = state.filteredBookstores.filter(b => b.statut_prospection === col.key);
     // Au-delà de 200 fiches par colonne, l'affichage devient illisible et lent : on tronque
     const shown = colItems.slice(0, 200);
@@ -1108,7 +1162,8 @@ function renderAnalyticsView() {
           { key: 'CATALOGUE_ENVOYE', label: 'Catalogue Envoyé', color: 'var(--status-catalogue)' },
           { key: 'RDV_PRIS', label: 'RDV Fixé', color: 'var(--status-rdv)' },
           { key: 'CLIENT_ACTIF', label: 'Client Actif (Compte ouvert)', color: 'var(--status-client)' },
-          { key: 'A_RELANCER', label: 'À Relancer', color: 'var(--status-relance)' }
+          { key: 'A_RELANCER', label: 'À Relancer', color: 'var(--status-relance)' },
+          { key: 'FERMEE', label: 'Fermée', color: 'var(--text-muted)' }
         ].map(s => {
           const count = statusCounts[s.key] || 0;
           return `
@@ -1279,6 +1334,7 @@ function openDrawer(id) {
       <button class="btn btn-secondary btn-sm ${item.is_favorite ? 'active' : ''}" id="drawer-fav-btn" onclick="toggleFavorite(${item.id}, event)" style="margin-left:0.75rem;padding:0.2rem 0.55rem;font-size:0.75rem;">
         ${item.is_favorite ? '⭐ En favori' : '☆ Mettre en favori'}
       </button>
+      ${item.fiche_manuelle ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirNouvelleFiche(${item.id})" style="margin-left:0.4rem;padding:0.2rem 0.55rem;font-size:0.75rem;" title="Fiche créée par vous : nom, type, adresse, coordonnées">✏️ Modifier la fiche</button>` : ''}
     `;
   }
 
@@ -1290,10 +1346,17 @@ function openDrawer(id) {
 
   if (drawerContainer) {
     drawerContainer.innerHTML = `
+      ${procedureEncadre(item)}
+      ${item.hors_liste ? `
+      <div class="drawer-section">
+        <p style="font-size:0.8rem;">📋 <strong>Absente de la liste officielle du Ministère</strong> : librairie trouvée dans SIRENE (commerce de détail de livres, en activité${item.hors_liste.date_creation && item.hors_liste.date_creation > '1901' ? `, créée le ${formatDateFr(item.hors_liste.date_creation)}` : ''}).
+        Assortiment et activité réelle à vérifier au premier contact.</p>
+      </div>` : ''}
       ${client ? `
       <div class="drawer-section g-client-box">
         <h3>🤝 Client</h3>
         <p>${situation ? `${situation.stockTotal} ex. en dépôt (${euros(situation.valeurStock)} HT)${situation.aFacturer ? ` · <strong>${euros(situation.aFacturer)} à facturer</strong>` : ''}${situation.impayes ? ` · <span class="data-check">${euros(situation.impayes)} impayés</span>` : ''}${situation.dernierContact ? ` · dernier contact le ${formatDateFr(situation.dernierContact)}` : ''}` : 'Aucun mouvement enregistré.'}</p>
+        ${situation ? dernierCommentaireHtml(situation) : ''}
         <button class="btn btn-primary btn-sm" onclick="openClient('${escapeHtml(client.id)}')">Ouvrir le suivi client (dépôts, ventes, factures)</button>
       </div>` : ''}
       ${(() => {
@@ -1399,6 +1462,7 @@ function openDrawer(id) {
               <a class="btn btn-secondary btn-sm" href="${escapeHtml(item.google_maps_url)}" target="_blank" rel="noopener" style="font-size:0.7rem;padding:0.2rem 0.5rem;">Google Maps ↗</a>
               <a class="btn btn-secondary btn-sm" href="https://www.google.com/search?q=${q}" target="_blank" rel="noopener" style="font-size:0.7rem;padding:0.2rem 0.5rem;">Recherche Google ↗</a>
               <a class="btn btn-secondary btn-sm" href="https://www.pagesjaunes.fr/annuaire/chercherlespros?quoiqui=${encodeURIComponent(item.nom)}&ou=${encodeURIComponent(item.commune + ' (' + item.code_postal + ')')}" target="_blank" rel="noopener" style="font-size:0.7rem;padding:0.2rem 0.5rem;">PagesJaunes ↗</a>
+              <a class="btn btn-secondary btn-sm" href="https://www.google.com/search?q=${encodeURIComponent(`site:placedeslibraires.fr ${item.nom} ${item.commune}`)}" target="_blank" rel="noopener" style="font-size:0.7rem;padding:0.2rem 0.5rem;" title="Recherche de la librairie sur Place des Libraires">Place des Libraires ↗</a>
               ${item.osm_url ? `<a class="btn btn-secondary btn-sm" href="${escapeHtml(item.osm_url)}" target="_blank" rel="noopener" style="font-size:0.7rem;padding:0.2rem 0.5rem;">Fiche OpenStreetMap ↗</a>` : ''}
             </div>
             <span style="font-size:0.7rem;color:var(--text-muted);">Saisissez ce que vous trouvez dans les champs ci-dessus puis « Enregistrer » : la source affichée sera « saisie manuelle ».</span>
@@ -1429,6 +1493,7 @@ function openDrawer(id) {
             <select id="drawer-status-select" class="form-control">
               ${STATUS_OPTIONS.map(s => `<option value="${s.key}" ${item.statut_prospection === s.key ? 'selected' : ''}>${s.icon} ${s.label}</option>`).join('')}
             </select>
+            <div class="g-muted" style="font-size:0.7rem;margin-top:0.2rem;">Librairie fermée ? Choisissez « Fermée » : la fiche disparaît des listes sans être effacée.${estClient(item.id) ? ' Cliente : « Client actif » automatiquement.' : ''}</div>
           </div>
 
           <div class="form-group">
@@ -1541,7 +1606,9 @@ Bien cordialement,
   );
 
   const to = safeEmail(item.email);
-  window.open(`mailto:${to}?subject=${subject}&body=${body}`, '_blank');
+  // Ouverture dans la page même : Safari bloque l'ouverture d'un email dans une nouvelle fenêtre
+  // (« ce site web n'est pas autorisé à composer des emails automatiquement »)
+  window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
   showToast(to ? "Modèle d'email ouvert dans votre messagerie (à compléter)." : "Modèle ouvert : email de la librairie à récupérer.");
 }
 
@@ -1639,6 +1706,7 @@ function formatStatusName(status) {
     case 'RDV_PRIS': return 'RDV Fixé';
     case 'CLIENT_ACTIF': return 'Client Actif';
     case 'A_RELANCER': return 'À Relancer';
+    case 'FERMEE': return 'Fermée';
     default: return status;
   }
 }
@@ -1651,6 +1719,7 @@ function getStatusColor(status) {
     case 'RDV_PRIS': return 'var(--status-rdv)';
     case 'CLIENT_ACTIF': return 'var(--status-client)';
     case 'A_RELANCER': return 'var(--status-relance)';
+    case 'FERMEE': return 'var(--text-muted)';
     default: return 'var(--border-subtle)';
   }
 }
@@ -1697,7 +1766,9 @@ const STATUS_OPTIONS = [
   { key: 'CATALOGUE_ENVOYE', label: 'Catalogue envoyé', icon: '📖' },
   { key: 'RDV_PRIS', label: 'RDV pris', icon: '🤝' },
   { key: 'CLIENT_ACTIF', label: 'Client actif', icon: '⭐' },
-  { key: 'A_RELANCER', label: 'À relancer', icon: '⏰' }
+  { key: 'A_RELANCER', label: 'À relancer', icon: '⏰' },
+  // Librairie fermée : la fiche est masquée des listes, rien n'est effacé (filtre « Statut » → « Fermée » pour la retrouver)
+  { key: 'FERMEE', label: 'Fermée (ne plus démarcher)', icon: '🚪' }
 ];
 
 const SIRENE_STATUS_LABELS = {
@@ -1917,8 +1988,14 @@ function infoDetail(item, key) {
  */
 const CRM_FIELDS = ['statut_prospection', 'priorite', 'contact_referent', 'notes_prospection', 'date_derniere_action', 'date_relance', 'is_favorite'];
 
+// Fiche reliée à un client (onglet Clients) : « Client actif », sauf si un autre statut a été choisi à la main
+function statutClient(item, e) {
+  if ((!e || e.statut_prospection === undefined) && estClient(item.id)) item.statut_prospection = 'CLIENT_ACTIF';
+  return item;
+}
+
 function applySuivi(item, e) {
-  if (!e) return item;
+  if (!e) return statutClient(item, e);
   item.info = { ...(item.info || {}) };
   CRM_FIELDS.forEach(k => { if (e[k] !== undefined) item[k] = e[k]; });
   for (const [k, s] of Object.entries(e.saisies || {})) {
@@ -1941,13 +2018,14 @@ function applySuivi(item, e) {
       item.info.position = info;
     }
   }
-  return item;
+  return statutClient(item, e);
 }
 
 const cloneItem = b => JSON.parse(JSON.stringify(b));
 
 function applySuiviToAll() {
   const entries = Suivi.all();
+  if (typeof synchroniserFichesManuelles === 'function') synchroniserFichesManuelles(entries);
   state.bookstores = [...state.baseById.values()].map(b => applySuivi(cloneItem(b), entries[b.id]));
 }
 

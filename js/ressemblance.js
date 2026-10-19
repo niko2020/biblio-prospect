@@ -78,7 +78,8 @@ function profilRessemblance() {
 
 // Indice d'une librairie : { score 0-100, details par critère } ; null pour un client ou une librairie fermée
 function ressemblance(b) {
-  if (!b || estClient(b.id) || b.etablissement_ferme) return null;
+  if (!b || estClient(b.id) || b.etablissement_ferme || b.statut_prospection === 'FERMEE') return null;
+  if (b.procedure && ['liquidation', 'cloture'].includes(b.procedure.type)) return null; // en liquidation : pas un prospect
   const prof = profilRessemblance();
   if (!prof.meilleurs.length) return null;
   let score = 0;
