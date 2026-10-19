@@ -649,7 +649,67 @@ function switchView(viewName) {
   saveUiState();
 }
 
+/**
+ * Vues lourdes (toute la France : plus de 5 000 fiches) : l'indicateur « Mise à jour… » s'affiche d'abord,
+ * puis la vue est calculée ; si un autre filtre est choisi entre-temps, seul le dernier affichage est fait.
+ */
+const VUES_LOURDES = ['map', 'table', 'cards', 'kanban', 'analytics', 'france'];
+let renduNo = 0;
+
+function indicateurChargement(actif) {
+  let el = document.getElementById('indicateur-chargement');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'indicateur-chargement';
+    el.className = 'indicateur-chargement';
+    el.setAttribute('role', 'status');
+    el.innerHTML = '<span class="indicateur-rond"></span> Mise à jour de l\'affichage…';
+    document.body.appendChild(el);
+  }
+  el.classList.toggle('actif', !!actif);
+}
+
 function renderActiveView() {
+  if (!state.uiReady || document.hidden || !VUES_LOURDES.includes(state.activeView)) { renderActiveViewNow(); return; }
+  const no = ++renduNo;
+  indicateurChargement(true);
+  // Laisse le navigateur afficher l'indicateur avant le calcul
+  requestAnimationFrame(() => setTimeout(() => {
+    if (no !== renduNo) return; // un affichage plus récent a été demandé
+    try { renderActiveViewNow(); } finally { if (no === renduNo) indicateurChargement(false); }
+  }, 0));
+}
+
+/**
+ * Listes longues : affichées par tranches de 100 ; la suite s'ajoute toute seule quand on approche du bas
+ * de la liste (ou avec le bouton « Afficher la suite »).
+ */
+const TRANCHE = 100;
+
+function afficherParTranches(conteneur, items, gabarit, gabaritSuite) {
+  if (conteneur._observateur) conteneur._observateur.disconnect();
+  conteneur._observateur = 'IntersectionObserver' in window
+    ? new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) suite(); }, { rootMargin: '800px' }) : null;
+  let affiches = 0;
+  function suite() {
+    const ancien = conteneur.querySelector(':scope > .ligne-suite');
+    if (ancien) { if (conteneur._observateur) conteneur._observateur.unobserve(ancien); ancien.remove(); }
+    const tranche = items.slice(affiches, affiches + TRANCHE);
+    affiches += tranche.length;
+    const reste = items.length - affiches;
+    conteneur.insertAdjacentHTML('beforeend', tranche.map(gabarit).join('')
+      + (reste > 0 ? gabaritSuite(`<button class="btn btn-secondary btn-sm" type="button">Afficher la suite (${reste} restante${reste > 1 ? 's' : ''})</button>`) : ''));
+    const s = conteneur.querySelector(':scope > .ligne-suite');
+    if (s) {
+      s.querySelector('button').addEventListener('click', suite);
+      if (conteneur._observateur) conteneur._observateur.observe(s);
+    }
+  }
+  conteneur.innerHTML = '';
+  suite();
+}
+
+function renderActiveViewNow() {
   switch (state.activeView) {
     case 'map':
       renderMapView();
@@ -813,6 +873,7 @@ function renderMapView() {
 
   state.markersLayer.clearLayers();
   const newMarkers = [];
+  const icones = new Map(); // une icône par couleur et précision, partagée par toutes les épingles
 
   state.filteredBookstores.forEach(item => {
     if (!Number.isFinite(item.latitude) || !Number.isFinite(item.longitude)) return;
@@ -826,7 +887,8 @@ function renderMapView() {
 
     // Position approximative (centre de commune) : épingle en pointillés
     const approx = item.localisation !== 'adresse';
-    const customIcon = L.divIcon({
+    const cleIcone = markerColor + (approx ? '~' : '');
+    if (!icones.has(cleIcone)) icones.set(cleIcone, L.divIcon({
       className: 'custom-map-pin',
       html: `
         <div style="background:${markerColor};width:28px;height:28px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);
@@ -837,9 +899,11 @@ function renderMapView() {
       iconSize: [28, 28],
       iconAnchor: [14, 28],
       popupAnchor: [0, -28]
-    });
+    }));
+    const customIcon = icones.get(cleIcone);
 
-    const popupHtml = `
+    // Contenu de la bulle calculé au clic seulement (inutile pour les milliers d'épingles jamais ouvertes)
+    const popupHtml = () => `
       <div class="popup-inner">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
           <span style="font-size:0.7rem;font-weight:700;color:${markerColor};text-transform:uppercase;">${formatStatusName(item.statut_prospection)}</span>
@@ -914,7 +978,12 @@ function renderTableView() {
     return;
   }
 
-  tableBody.innerHTML = state.filteredBookstores.map(item => `
+  afficherParTranches(tableBody, state.filteredBookstores, ligneTableau,
+    bouton => `<tr class="ligne-suite"><td colspan="7" style="text-align:center;padding:0.75rem;">${bouton}</td></tr>`);
+}
+
+function ligneTableau(item) {
+  return `
     <tr>
       <td>
         <div class="cell-name-box">
@@ -957,8 +1026,7 @@ function renderTableView() {
           <button class="btn btn-primary" onclick="openDrawer(${item.id})" style="padding:0.3rem 0.65rem;">Fiche</button>
         </div>
       </td>
-    </tr>
-  `).join('');
+    </tr>`;
 }
 
 /**
@@ -977,7 +1045,12 @@ function renderCardsView() {
     return;
   }
 
-  cardsContainer.innerHTML = state.filteredBookstores.map(item => `
+  afficherParTranches(cardsContainer, state.filteredBookstores, carteFiche,
+    bouton => `<div class="ligne-suite" style="grid-column:1/-1;text-align:center;padding:0.75rem;">${bouton}</div>`);
+}
+
+function carteFiche(item) {
+  return `
     <div class="bookstore-card">
       <div>
         <div class="card-top">
@@ -1035,8 +1108,7 @@ function renderCardsView() {
         <a href="${escapeHtml(item.google_maps_url)}" target="_blank" rel="noopener" class="btn btn-secondary" title="Voir sur Google Maps">🗺️ Maps</a>
         <button class="btn btn-primary" onclick="openDrawer(${item.id})">Ouvrir la fiche</button>
       </div>
-    </div>
-  `).join('');
+    </div>`;
 }
 
 /**
