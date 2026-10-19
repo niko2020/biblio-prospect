@@ -9,7 +9,8 @@
  * Règles (modifiables ici) :
  */
 const GESTION_REGLES = {
-  joursSansContact: 90,     // « à appeler » : du stock chez le libraire et pas de contact depuis ce délai
+  joursSansContact: 30,     // « à appeler » : du stock et pas de contact depuis ce délai (tour mensuel des dépôts)
+  partStockBas: 0.2,        // « réassort » : le client a vendu et il lui reste au plus 20 % de ce qui a été déposé
   joursApresFinDeMois: 30,  // échéance des factures : « 30 jours fin de mois » (mention de ses factures)
   commissionParDefaut: 0.3  // quand le carnet d'adresses n'indique pas la commission
 };
@@ -52,7 +53,7 @@ function calculGestion() {
       parPdv.set(pid, {
         pdv: pdvs[pid] || { id: pid, nom: '(point de vente inconnu)' }, stock: {}, stockTotal: 0, valeurStock: 0,
         dernierContact: null, ventesNonFacturees: [], aFacturer: 0, facturesImpayees: [], impayes: 0,
-        totalVentes: 0, chiffreAffaires: 0, mouvements: [], factures: []
+        totalVentes: 0, chiffreAffaires: 0, mouvements: [], factures: [], deposes: {}, vendus: {}, raisons: []
       });
     }
     return parPdv.get(pid);
@@ -64,6 +65,8 @@ function calculGestion() {
     f.mouvements.push(m);
     const t = MVT_TYPES[m.type];
     if (t && t.signe && m.isbn) f.stock[m.isbn] = (f.stock[m.isbn] || 0) + t.signe * (m.qte || 0);
+    if (m.isbn && m.type === 'depot') f.deposes[m.isbn] = (f.deposes[m.isbn] || 0) + (m.qte || 0);
+    if (m.isbn && m.type === 'vente') f.vendus[m.isbn] = (f.vendus[m.isbn] || 0) + (m.qte || 0);
     if (m.date && (!f.dernierContact || m.date > f.dernierContact) && !m.date_approx) f.dernierContact = m.date;
     if (m.type === 'vente') {
       f.totalVentes += m.qte || 0;
@@ -95,8 +98,22 @@ function calculGestion() {
     stockValeur += f.valeurStock;
     totalAFacturer += f.aFacturer;
     totalImpayes += f.impayes;
+    // Raisons d'appeler, de la plus urgente à la moins urgente
     const sansContact = joursDepuis(f.dernierContact);
-    if (f.stockTotal > 0 && sansContact > GESTION_REGLES.joursSansContact) aAppeler.push(f);
+    const lib = f.pdv.librairie_id && typeof state !== 'undefined' && state.baseById ? state.baseById.get(f.pdv.librairie_id) : null;
+    const titre = isbn => titres[isbn]?.titre || isbn;
+    if (lib && lib.etablissement_ferme && f.stockTotal > 0) {
+      f.raisons.push({ type: 'ferme', texte: `🚪 Établissement fermé${lib.etablissement_ferme.date_fermeture ? ' le ' + formatDateFr(lib.etablissement_ferme.date_fermeture) : ''} (base officielle) : récupérer le stock` });
+    }
+    const ruptures = Object.keys(f.vendus).filter(isbn => (f.stock[isbn] || 0) <= 0);
+    if (ruptures.length) f.raisons.push({ type: 'rupture', texte: `📉 Rupture probable : ${ruptures.map(titre).join(', ')} (tout vendu)` });
+    const bas = Object.keys(f.vendus).filter(isbn => (f.stock[isbn] || 0) > 0 && f.stock[isbn] <= Math.max(1, (f.deposes[isbn] || 0) * GESTION_REGLES.partStockBas));
+    if (bas.length) f.raisons.push({ type: 'reassort', texte: `🔁 Vend bien, stock bas : proposer un réassort (${bas.map(titre).join(', ')})` });
+    if (f.stockTotal > 0 && sansContact > GESTION_REGLES.joursSansContact) {
+      f.raisons.push({ type: 'contact', texte: f.dernierContact ? `Pas de contact depuis le ${formatDateFr(f.dernierContact)}` : 'Aucun contact daté' });
+    }
+    f.priorite = f.raisons.length ? Math.min(...f.raisons.map(r => ({ ferme: 0, rupture: 1, reassort: 2, contact: 3 })[r.type])) : 9;
+    if (f.raisons.length && !(f.raisons.length === 1 && f.raisons[0].type === 'rupture' && f.stockTotal === 0 && sansContact <= GESTION_REGLES.joursSansContact)) aAppeler.push(f);
     if (f.ventesNonFacturees.length) aFacturer.push(f);
     for (const fa of f.facturesImpayees) {
       const echeance = fa.echeance || echeanceFacture(fa.date);
@@ -105,7 +122,7 @@ function calculGestion() {
     f.mouvements.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
     f.factures.sort((a, b) => (b.numero || '').localeCompare(a.numero || ''));
   }
-  aAppeler.sort((a, b) => b.valeurStock - a.valeurStock);
+  aAppeler.sort((a, b) => a.priorite - b.priorite || b.totalVentes - a.totalVentes || b.valeurStock - a.valeurStock);
   aFacturer.sort((a, b) => b.aFacturer - a.aFacturer);
   // Échéances dépassées d'abord (les plus anciennes en tête), puis dates inconnues, puis pas encore échues
   const rang = i => i.enRetard ? 0 : !i.echeance ? 1 : 2;
@@ -156,9 +173,10 @@ function renderAccueilView() {
     box.innerHTML = `<div class="g-empty">Aucune donnée de gestion pour l'instant. Elles apparaîtront ici après la reprise du classeur.</div>`;
     return;
   }
-  const ligneClient = (f, detail) => `
+  const ligneClient = (f, detail, raisons) => `
     <button class="g-row" onclick="openClient('${escapeHtml(f.pdv.id)}')">
-      <span class="g-row-main"><strong>${escapeHtml(f.pdv.nom)}</strong><span class="g-muted">${escapeHtml(f.pdv.ville || '')}</span></span>
+      <span class="g-row-main"><strong>${escapeHtml(f.pdv.nom)}</strong><span class="g-muted">${escapeHtml(f.pdv.ville || '')}</span>
+        ${(raisons || []).filter(r => r.type !== 'contact').map(r => `<span class="g-raison g-raison-${r.type}">${escapeHtml(r.texte)}</span>`).join('')}</span>
       <span class="g-row-side">${detail}</span>
     </button>`;
   const contactTxt = f => f.dernierContact ? `dernier contact ${formatDateFr(f.dernierContact)}` : 'aucun contact daté';
@@ -167,8 +185,8 @@ function renderAccueilView() {
     <div class="g-grid">
       <section class="g-card">
         <h3>📞 À appeler <span class="g-count">${g.aAppeler.length}</span></h3>
-        <p class="g-help">Du stock en dépôt et pas de contact depuis plus de ${GESTION_REGLES.joursSansContact} jours : faire le point sur les ventes.</p>
-        ${g.aAppeler.slice(0, 40).map(f => ligneClient(f, `${f.stockTotal} ex. · ${euros(f.valeurStock)}<br><span class="g-muted">${contactTxt(f)}</span>`)).join('') || '<p class="g-muted">Personne à appeler.</p>'}
+        <p class="g-help">Par ordre d'urgence : librairie fermée, rupture probable, réassort à proposer, puis pas de contact depuis plus de ${GESTION_REGLES.joursSansContact} jours (tour mensuel).</p>
+        ${g.aAppeler.slice(0, 50).map(f => ligneClient(f, `${f.stockTotal} ex. · ${euros(f.valeurStock)}<br><span class="g-muted">${contactTxt(f)}</span>`, f.raisons)).join('') || '<p class="g-muted">Personne à appeler.</p>'}
       </section>
       <section class="g-card">
         <h3>🧾 À facturer <span class="g-count">${g.aFacturer.length}</span></h3>
@@ -183,6 +201,22 @@ function renderAccueilView() {
            <span class="${enRetard ? 'data-check' : 'g-muted'}">${echeance ? `${enRetard ? 'échue' : 'échéance'} le ${formatDateFr(echeance)}` : 'date de facture inconnue'}</span>`)).join('') || '<p class="g-muted">Aucun impayé.</p>'}
       </section>
     </div>
+    <section class="g-card g-wide">
+      <h3>🎯 Prospects à démarcher en premier <button class="g-info" onclick="openRessemblanceInfo()" title="Comment est calculée la ressemblance ?">ⓘ</button></h3>
+      <p class="g-help">Librairies qui ne sont pas encore clientes, classées par ressemblance avec celles où vos livres se vendent le mieux. Survolez la note pour le détail.</p>
+      ${(() => {
+        const prospects = (typeof ressemblance === 'function' ? state.bookstores : [])
+          .filter(b => b.statut_prospection === 'A_CONTACTER')
+          .map(b => ({ b, r: ressemblance(b) })).filter(x => x.r).sort((x, y) => y.r.score - x.r.score).slice(0, 15);
+        return prospects.length ? `<div class="g-prospects">${prospects.map(({ b, r }) => `
+          <button class="g-row" onclick="openDrawer(${b.id})">
+            <span class="g-row-main"><strong>${escapeHtml(b.nom)}</strong><span class="g-muted">${escapeHtml(b.commune)} · ${escapeHtml(b.region)}${b.email ? ' · email connu' : b.telephone ? ' · téléphone connu' : ''}</span></span>
+            <span class="g-row-side">${ressemblanceBadge(b)}</span>
+          </button>`).join('')}</div>
+          <p style="margin-top:0.5rem;"><button class="btn btn-secondary btn-sm" onclick="voirTousProspects()">Voir tous les prospects classés</button></p>`
+          : '<p class="g-muted">Reliez vos clients à leur fiche librairie pour obtenir des suggestions.</p>';
+      })()}
+    </section>
     <section class="g-card g-wide">
       <h3>⚠️ À vérifier <span class="g-count">${g.anomaliesOuvertes.length}</span></h3>
       <p class="g-help">Incohérences trouvées en reprenant le classeur Excel (rien n'a été corrigé à votre place). Cochez « Traité » une fois vérifié.</p>
@@ -315,6 +349,27 @@ function openClient(pid) {
     </div>
 
     <div class="drawer-section">
+      <h3>🔗 Fiche librairie</h3>
+      ${pdv.librairie_id && state.baseById.get(pdv.librairie_id) ? `
+        <p>Reliée à <a href="#" onclick="openDrawer(${pdv.librairie_id}); return false;" style="color:var(--text-cyan);">${escapeHtml(state.baseById.get(pdv.librairie_id).nom)} (${escapeHtml(state.baseById.get(pdv.librairie_id).commune)})</a>
+        <button class="btn btn-secondary btn-sm" onclick="relierLibrairie('${pid}', null)">Délier</button></p>`
+        : `<p class="g-muted" style="font-size:0.75rem;">Pas encore reliée. Relier ce client à sa fiche permet de l'afficher dans la prospection et d'en tenir compte pour la ressemblance.</p>
+        <input class="form-control" id="g-lien-q" placeholder="Nom de la librairie ou commune…" value="${escapeHtml(pdv.nom)}" oninput="chercherLibrairie('${pid}')">
+        <div id="g-lien-res"></div>`}
+    </div>
+
+    <div class="drawer-section">
+      <h3>🔀 Doublon ?</h3>
+      <p class="g-muted" style="font-size:0.75rem;">Si ce client existe deux fois, fusionnez-le avec l'autre fiche : dépôts, ventes et factures sont regroupés.</p>
+      <select class="form-control" id="g-fusion-cible">
+        <option value="">Choisir le client à garder…</option>
+        ${Object.values(Suivi.collection('pdv')).filter(p => !p.supprime && p.id !== pid).sort((a, b) => a.nom.localeCompare(b.nom, 'fr'))
+          .map(p => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.nom)}${p.ville ? ' (' + escapeHtml(p.ville) + ')' : ''}</option>`).join('')}
+      </select>
+      <button class="btn btn-secondary btn-sm" style="margin-top:0.4rem;" onclick="fusionnerClients('${pid}', document.getElementById('g-fusion-cible').value)">Fusionner dans le client choisi</button>
+    </div>
+
+    <div class="drawer-section">
       <h3>📇 Coordonnées</h3>
       ${['telephone', 'email', 'contact', 'adresse', 'code_postal', 'ville'].map(k => `
         <div class="form-group"><label>${{ telephone: 'Téléphone', email: 'Email', contact: 'Interlocuteur', adresse: 'Adresse', code_postal: 'Code postal', ville: 'Ville' }[k]}</label>
@@ -435,6 +490,60 @@ function openNouveauClient() {
   Suivi.put('pdv', id, { nom: nom.trim(), noms: [nom.trim()], origine: 'outil' });
   refreshGestion(false);
   openClient(id);
+}
+
+const normTxt = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+
+// Recherche de la fiche librairie d'un client : par mots du nom ou de la commune, même département d'abord
+function chercherLibrairie(pid) {
+  const pdv = Suivi.collection('pdv')[pid];
+  const q = normTxt(document.getElementById('g-lien-q')?.value).split(' ').filter(w => w.length > 2 && !['librairie', 'les', 'des', 'the'].includes(w));
+  const box = document.getElementById('g-lien-res');
+  if (!box) return;
+  if (!q.length) { box.innerHTML = ''; return; }
+  const dep = String(pdv.code_postal || pdv.departement || '').slice(0, 2);
+  const res = state.bookstores.map(b => {
+    const txt = normTxt([b.nom, ...(b.autres_noms || []), b.commune].join(' '));
+    const hits = q.filter(w => txt.includes(w)).length;
+    return { b, s: hits / q.length + (dep && b.code_postal.startsWith(dep) ? 0.3 : 0) };
+  }).filter(x => x.s >= 0.5).sort((x, y) => y.s - x.s).slice(0, 6);
+  box.innerHTML = res.map(({ b }) => `
+    <div class="g-facture"><span>${escapeHtml(b.nom)} <span class="g-muted">${escapeHtml(b.commune)} (${escapeHtml(b.code_postal)})</span>${estClient(b.id) ? ' <span class="badge-client">déjà client</span>' : ''}</span>
+      <button class="btn btn-primary btn-sm" onclick="relierLibrairie('${pid}', ${b.id})">Relier</button></div>`).join('') || '<p class="g-muted">Aucune librairie trouvée : essayez un autre mot ou la commune.</p>';
+}
+
+function relierLibrairie(pid, librairieId) {
+  const pdv = Suivi.collection('pdv')[pid];
+  if (!pdv) return;
+  if (librairieId && estClient(librairieId) && estClient(librairieId).id !== pid) {
+    if (!confirm('Cette librairie est déjà reliée à un autre client : c\'est peut-être un doublon (à fusionner). Relier quand même ?')) return;
+  }
+  Suivi.put('pdv', pid, { ...pdv, librairie_id: librairieId || null });
+  state._clients = null; // cache des clients reliés
+  showToast(librairieId ? 'Client relié à sa fiche librairie.' : 'Lien supprimé.');
+  refreshGestion(true, pid);
+  if (typeof applyFilters === 'function') { applyFilters(); }
+}
+
+// Fusion de deux fiches client : tout ce qui concerne « source » passe sur « cible », la source est retirée
+function fusionnerClients(sourceId, cibleId) {
+  const pdvs = Suivi.collection('pdv');
+  const src = pdvs[sourceId], dst = pdvs[cibleId];
+  if (!src || !dst || sourceId === cibleId) { showToast('Choisissez le client à garder.'); return false; }
+  if (!confirm(`Fusionner « ${src.nom} » dans « ${dst.nom} » ? Dépôts, ventes et factures de « ${src.nom} » passent sur « ${dst.nom} ». (Récupérable dans l'historique de la sauvegarde.)`)) return false;
+  let n = 0;
+  for (const m of Object.values(Suivi.collection('mouvements'))) if (m.pdv === sourceId) { Suivi.put('mouvements', m.id, { ...m, pdv: cibleId }); n++; }
+  for (const fa of Object.values(Suivi.collection('factures'))) if (fa.pdv === sourceId) { Suivi.put('factures', fa.numero || fa.id, { ...fa, pdv: cibleId }); n++; }
+  const merged = { ...dst, noms: [...new Set([...(dst.noms || [dst.nom]), ...(src.noms || [src.nom])])] };
+  for (const k of ['telephone', 'email', 'contact', 'adresse', 'code_postal', 'ville', 'departement', 'site_web', 'horaires', 'commission', 'librairie_id']) {
+    if ((merged[k] == null || merged[k] === '') && src[k] != null && src[k] !== '') merged[k] = src[k];
+  }
+  Suivi.put('pdv', cibleId, merged);
+  Suivi.put('pdv', sourceId, { ...src, supprime: true, fusionne_dans: cibleId, supprime_le: today() });
+  if (typeof state !== 'undefined') state._clients = null;
+  showToast(`Fusion faite : ${n} élément(s) regroupé(s).`);
+  refreshGestion(true, cibleId);
+  return true;
 }
 
 // Rafraîchit chiffres clés, vues de gestion et, si demandé, la fiche client ouverte

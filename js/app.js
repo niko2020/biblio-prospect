@@ -497,7 +497,11 @@ function applyFilters() {
   // Tri
   // Les valeurs non récupérées (null) passent en fin de liste
   const desc = key => (a, b) => (b[key] ?? -1) - (a[key] ?? -1);
-  if (f.sortBy === 'rating_desc') {
+  if (f.sortBy === 'ressemblance_desc') {
+    // Clients et fiches sans note en fin de liste
+    const sc = new Map(list.map(b => [b.id, (ressemblance(b) || { score: -1 }).score]));
+    list.sort((a, b) => sc.get(b.id) - sc.get(a.id));
+  } else if (f.sortBy === 'rating_desc') {
     list.sort(desc('google_rating'));
   } else if (f.sortBy === 'reviews_desc') {
     list.sort(desc('google_reviews_count'));
@@ -561,6 +565,20 @@ function renderActiveView() {
 
 function goView(viewName) {
   switchView(viewName);
+}
+
+// Accueil › « Voir tous les prospects classés » : tableau de toute la France trié par ressemblance
+function voirTousProspects() {
+  state.filters.region = 'ALL';
+  state.filters.department = 'ALL';
+  state.filters.status = 'A_CONTACTER';
+  state.filters.sortBy = 'ressemblance_desc';
+  syncControlsFromState();
+  state.needsFitBounds = true;
+  applyFilters();
+  switchView('table');
+  updateKpis();
+  window.scrollTo(0, 0);
 }
 
 /**
@@ -714,7 +732,7 @@ function renderMapView() {
             <button class="btn-fav-inline ${item.is_favorite ? 'active' : ''}" onclick="toggleFavorite(${item.id}, event)" title="${item.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
               ${item.is_favorite ? '⭐' : '☆'}
             </button>
-            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}
+            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${ressemblanceBadge(item)}
           </div>
         </div>
         <h4 class="popup-title" style="margin-top:0.3rem;">${escapeHtml(item.nom)}</h4>
@@ -792,7 +810,7 @@ function renderTableView() {
             <span class="cell-name" onclick="openDrawer(${item.id})">${escapeHtml(item.nom)}</span>
           </div>
           <div style="display:flex;gap:0.35rem;align-items:center;flex-wrap:wrap;margin-left:1.4rem;margin-top:0.2rem;">
-            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}
+            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${ressemblanceBadge(item)}
             ${(item.categories || [item.assortiment]).map(cat => `
               <span class="badge-specialty-mini">${escapeHtml(cat)}</span>
             `).join('')}
@@ -858,7 +876,7 @@ function renderCardsView() {
             <button class="btn-fav ${item.is_favorite ? 'active' : ''}" onclick="toggleFavorite(${item.id}, event)" title="${item.is_favorite ? 'Retirer des favoris' : 'Ajouter aux favoris'}">
               ${item.is_favorite ? '⭐' : '☆'}
             </button>
-            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}
+            ${item.is_lir ? '<span class="badge-lir">★ LIR</span>' : ''}${estClient(item.id) ? '<span class="badge-client">🤝 Client</span>' : ''}${ressemblanceBadge(item)}
           </div>
         </div>
 
@@ -1217,6 +1235,13 @@ function openDrawer(id) {
         <p>${situation ? `${situation.stockTotal} ex. en dépôt (${euros(situation.valeurStock)} HT)${situation.aFacturer ? ` · <strong>${euros(situation.aFacturer)} à facturer</strong>` : ''}${situation.impayes ? ` · <span class="data-check">${euros(situation.impayes)} impayés</span>` : ''}${situation.dernierContact ? ` · dernier contact le ${formatDateFr(situation.dernierContact)}` : ''}` : 'Aucun mouvement enregistré.'}</p>
         <button class="btn btn-primary btn-sm" onclick="openClient('${escapeHtml(client.id)}')">Ouvrir le suivi client (dépôts, ventes, factures)</button>
       </div>` : ''}
+      ${(() => {
+        const r = ressemblance(item);
+        return r ? `<div class="drawer-section">
+          <h3>🎯 Ressemblance avec vos meilleurs clients : ${r.score}/100 <button class="g-info" onclick="openRessemblanceInfo()" title="Comment est-ce calculé ?">ⓘ</button></h3>
+          <table class="g-table">${r.details.map(d => `<tr title="${escapeHtml(d.critere.explication)}"><td>${escapeHtml(d.critere.label)}</td><td style="text-align:right;white-space:nowrap;">${d.points}/${d.critere.poids}</td><td class="g-muted">${escapeHtml(d.detail)}</td></tr>`).join('')}</table>
+        </div>` : '';
+      })()}
       <div class="drawer-section">
         <h3>📍 Fiche établissement</h3>
         <p style="font-size:0.72rem;color:var(--text-muted);margin:-0.25rem 0 0.6rem;">
