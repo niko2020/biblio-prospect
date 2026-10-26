@@ -111,7 +111,9 @@ function calculGestion() {
     }
     // Procédure collective publiée au BODACC : stock à récupérer, créance à déclarer (délais légaux)
     const p = lib && lib.procedure;
-    if (p && typeof PROCEDURES !== 'undefined' && (PROCEDURES[p.type] || {}).grave && (f.stockTotal > 0 || f.facturesImpayees.length)) {
+    // (sauf si l'éditrice a indiqué que la situation est réglée pour cette décision : une nouvelle décision la fait revenir)
+    if (p && typeof PROCEDURES !== 'undefined' && (PROCEDURES[p.type] || {}).grave && (f.stockTotal > 0 || f.facturesImpayees.length)
+      && f.pdv.procedure_reglee !== (p.annonce || p.date_jugement)) {
       const d = PROCEDURES[p.type];
       // Les délais courent depuis la publication du jugement d'ouverture
       const pub = (p.ouverture && p.ouverture.date_parution) || p.date_parution;
@@ -164,6 +166,30 @@ function calculGestion() {
     kpis: { stockEx, stockValeur, totalAFacturer, totalImpayes, nbImpayes: impayes.length, nbEnRetard: impayes.filter(i => i.enRetard).length, nbAppeler: aAppeler.length },
     vide: !Object.keys(pdvs).length
   };
+}
+
+// Procédure collective d'un client (BODACC) : rappel dans sa fiche, et bouton pour retirer l'alerte une fois réglée
+function procedureClientHtml(pdv, lib) {
+  const p = lib && lib.procedure;
+  if (!p || typeof PROCEDURES === 'undefined' || !(PROCEDURES[p.type] || {}).grave) return '';
+  const cle = p.annonce || p.date_jugement;
+  const reglee = pdv.procedure_reglee === cle;
+  return `<div class="drawer-section g-procedure grave">
+      <p>⚖️ <strong>${escapeHtml(PROCEDURES[p.type].long)}</strong> depuis le ${formatDateFr(p.date_jugement)} (BODACC).</p>
+      ${reglee
+        ? `<p class="g-muted" style="font-size:0.75rem;">Situation marquée réglée le ${formatDateFr(pdv.procedure_reglee_le)} : plus d'alerte dans l'Accueil. <a href="#" onclick="marquerProcedureReglee('${escapeHtml(pdv.id)}', false); return false;" style="color:var(--text-cyan);">Remettre l'alerte</a></p>`
+        : `<button class="btn btn-secondary btn-sm" onclick="marquerProcedureReglee('${escapeHtml(pdv.id)}', true)" title="L'alerte « À appeler » disparaît ; elle reviendra si une nouvelle décision est publiée">Situation réglée : ne plus afficher l'alerte</button>`}
+    </div>`;
+}
+
+function marquerProcedureReglee(pid, reglee) {
+  const pdv = Suivi.collection('pdv')[pid];
+  const lib = pdv && pdv.librairie_id && state.baseById.get(pdv.librairie_id);
+  const p = lib && lib.procedure;
+  if (!p) return;
+  Suivi.put('pdv', pid, { ...pdv, procedure_reglee: reglee ? (p.annonce || p.date_jugement) : null, procedure_reglee_le: reglee ? today() : null });
+  showToast(reglee ? 'Situation marquée réglée : l\'alerte ne s\'affiche plus.' : 'Alerte rétablie.');
+  refreshGestion(true, pid);
 }
 
 // Dernier commentaire d'un client (repris des colonnes « Commentaire » du classeur, ou saisi ici)
@@ -392,6 +418,7 @@ function openClient(pid) {
     <tr><td>${escapeHtml(titres[isbn]?.titre || isbn)}</td><td style="text-align:right;${q < 0 ? 'color:var(--accent-rose);' : ''}"${q < 0 ? ' title="Stock à vérifier : plus de ventes et de retours que de dépôts enregistrés (un dépôt manque probablement, ou une saisie est en double)"' : ''}>${q} ex.${q < 0 ? ' ⚠️ à vérifier' : ''}</td></tr>`).join('');
 
   document.getElementById('drawer-content-body').innerHTML = `
+    ${procedureClientHtml(pdv, lib)}
     ${dernierCommentaireHtml(f) ? `<div class="drawer-section">${dernierCommentaireHtml(f)}</div>` : ''}
     <div class="drawer-section">
       <h3>📦 Stock chez ce client</h3>
