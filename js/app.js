@@ -82,6 +82,7 @@ function startApp() {
   saveUiState();
   surveillerNouvelleVersion();
   surveillerOnglets();
+  afficherVersion();
   // Récupère la sauvegarde en ligne (autre appareil, navigateur réinitialisé...) puis rafraîchit l'affichage
   if (Suivi.isConfigured()) {
     Suivi.pull().then(changed => { if (changed && Suivi.onRemoteChange) Suivi.onRemoteChange(); });
@@ -94,6 +95,21 @@ function startApp() {
  * Rien à faire pour le dossier ouvert depuis l'ordinateur ni en test local (version « dev »).
  */
 const VERSION_OUTIL = document.querySelector('meta[name="version-outil"]')?.content || 'dev';
+
+// Numéro de version, discret, en bas à gauche (utile pour signaler un souci) ; au survol : date des données
+function afficherVersion() {
+  if (document.getElementById('version-outil')) return;
+  const date = document.querySelector('meta[name="version-date"]')?.content || 'dev';
+  const datee = /^\d{4}-\d{2}-\d{2}$/.test(date) ? formatDateFr(date) : null;
+  const el = document.createElement('div');
+  el.id = 'version-outil';
+  el.className = 'version-outil';
+  el.textContent = VERSION_OUTIL !== 'dev' ? `version du ${datee || '?'} · ${VERSION_OUTIL.slice(0, 6)}` : datee ? `dossier du ${datee}` : 'version de travail';
+  const meta = window.LIBRAIRIES_META || {};
+  el.title = `Version de l'outil${datee ? ' du ' + datee : ''}${VERSION_OUTIL !== 'dev' ? ' (référence ' + VERSION_OUTIL + ')' : ''}`
+    + `${meta.genere_le ? ' ; données des librairies du ' + formatDateFr(meta.genere_le) : ''}. À indiquer si vous signalez un souci.`;
+  document.body.appendChild(el);
+}
 const VERIF_VERSION_MS = 5 * 60 * 1000;
 
 /**
