@@ -1877,3 +1877,9 @@ body.scrolled .controls-container {
 .indicateur-rond { width: 0.9rem; height: 0.9rem; border-radius: 50%; border: 2px solid var(--border-subtle); border-top-color: var(--accent-gold); animation: tourne 0.8s linear infinite; }
 @keyframes tourne { to { transform: rotate(360deg); } }
 .card-actions > .btn { flex: 1 1 auto; white-space: nowrap; justify-content: center; text-align: center; }
+
+/* Onglet en pause : l'outil est ouvert dans un autre onglet (un seul onglet modifie les données à la fois) */
+.voile-onglet { position: fixed; inset: 0; z-index: 10001; display: flex; align-items: center; justify-content: center; padding: 1rem; background: rgba(11, 15, 25, 0.82); }
+.voile-carte { max-width: 28rem; padding: 1.5rem; border-radius: var(--radius-md, 12px); background: var(--bg-secondary); color: var(--text-primary); border: 1px solid var(--border-focus); box-shadow: var(--shadow-lg); text-align: center; }
+.voile-carte h3 { margin: 0 0 0.6rem; font-size: 1.1rem; }
+.voile-carte p { font-size: 0.88rem; margin: 0 0 1rem; color: var(--text-secondary); }

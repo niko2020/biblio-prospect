@@ -24,7 +24,8 @@ const MVT_TYPES = {
 };
 
 const euros = n => (n || 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
-const today = () => new Date().toISOString().slice(0, 10);
+// Date du jour en heure de Paris (pas en heure universelle : entre minuit et 1 h ou 2 h, ce serait la veille)
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const joursDepuis = iso => iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86400000) : Infinity;
 const actifs = obj => Object.values(obj || {}).filter(r => !r.supprime);
 
@@ -371,6 +372,8 @@ function renderClientsView() {
  * Fiche client (dans le tiroir latéral)
  */
 function openClient(pid) {
+  // Une fiche librairie ouverte est enregistrée avant d'être remplacée (dernière frappe comprise)
+  if (typeof flushDrawer === 'function') flushDrawer();
   const g = calculGestion();
   const pdv = Suivi.collection('pdv')[pid];
   if (!pdv) return;
@@ -518,7 +521,7 @@ function formMouvement(pid, type, mvtId) {
       <div class="g-form-grid">
         <label>Date <input type="date" id="gf-date" class="form-control" value="${escapeHtml(m ? (m.date || '') : today())}"></label>
         ${avecTitre ? `
-          <label>Titre <select id="gf-titre" class="form-control">${titres.map(t => `<option value="${escapeHtml(t.isbn)}" ${m && m.isbn === t.isbn ? 'selected' : ''}>${escapeHtml(t.titre)}</option>`).join('')}</select></label>
+          <label>Titre <select id="gf-titre" class="form-control">${m && m.isbn && !titres.some(t => t.isbn === m.isbn) ? `<option value="${escapeHtml(m.isbn)}" selected>${escapeHtml(m.titre || m.isbn)} (titre du classeur)</option>` : ''}${titres.map(t => `<option value="${escapeHtml(t.isbn)}" ${m && m.isbn === t.isbn ? 'selected' : ''}>${escapeHtml(t.titre)}</option>`).join('')}</select></label>
           <label>Exemplaires <input type="number" id="gf-qte" class="form-control" min="1" step="1" value="${m ? (m.qte || 1) : 1}"></label>` : ''}
         ${piece || (m && avecTitre) ? `<label>N° de bon <input id="gf-piece" class="form-control" value="${escapeHtml(piece)}"></label>` : ''}
       </div>
@@ -545,7 +548,7 @@ function enregistrerMouvement(pid, type, mvtId) {
   const id = avant ? mvtId : 'mv-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   const rec = {
     ...(avant || { origine: 'outil' }),
-    type, pdv: pid, date, isbn: isbn || undefined, titre: titre?.titre, qte: qte || undefined,
+    type, pdv: pid, date, isbn: isbn || undefined, titre: titre?.titre || (avant && avant.isbn === isbn ? avant.titre : undefined), qte: qte || undefined,
     piece: v('gf-piece') || undefined, commentaire: v('gf-comm') || undefined,
     prix_ht: type === 'vente' ? (avant && avant.isbn === isbn && avant.prix_ht != null ? avant.prix_ht : titre?.prix_ht) : undefined
   };

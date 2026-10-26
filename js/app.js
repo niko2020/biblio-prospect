@@ -81,6 +81,7 @@ function startApp() {
   state.uiReady = true;
   saveUiState();
   surveillerNouvelleVersion();
+  surveillerOnglets();
   // Récupère la sauvegarde en ligne (autre appareil, navigateur réinitialisé...) puis rafraîchit l'affichage
   if (Suivi.isConfigured()) {
     Suivi.pull().then(changed => { if (changed && Suivi.onRemoteChange) Suivi.onRemoteChange(); });
@@ -94,6 +95,38 @@ function startApp() {
  */
 const VERSION_OUTIL = document.querySelector('meta[name="version-outil"]')?.content || 'dev';
 const VERIF_VERSION_MS = 5 * 60 * 1000;
+
+/**
+ * Un seul onglet actif : deux onglets qui enregistrent en même temps peuvent effacer les saisies l'un de
+ * l'autre (le navigateur ne montre pas toujours tout de suite à un onglet ce que l'autre vient d'écrire).
+ * L'onglet ouvert en dernier prend la main ; les autres enregistrent ce qui est en cours et se mettent en pause.
+ */
+const ONGLET_ID = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+function surveillerOnglets() {
+  if (!('BroadcastChannel' in window)) return;
+  const canal = new BroadcastChannel('biblio-prospect-onglets');
+  canal.onmessage = e => { if (e.data && e.data.type === 'actif' && e.data.id !== ONGLET_ID) mettreEnPause(); };
+  canal.postMessage({ type: 'actif', id: ONGLET_ID });
+}
+
+function mettreEnPause() {
+  if (document.getElementById('voile-onglet')) return;
+  try { flushDrawer(); } catch (e) { /* fiche déjà enregistrée */ }
+  Suivi.flush();
+  Suivi.suspendre();
+  const voile = document.createElement('div');
+  voile.id = 'voile-onglet';
+  voile.className = 'voile-onglet';
+  voile.innerHTML = `<div class="voile-carte">
+      <h3>L'outil est ouvert dans un autre onglet</h3>
+      <p>Pour que vos modifications ne se croisent pas, il est en pause ici. Tout ce que vous aviez saisi est enregistré.</p>
+      <button class="btn btn-primary" type="button">Continuer dans cet onglet</button>
+    </div>`;
+  // Reprendre ici : la page est rechargée pour repartir des données à jour (l'autre onglet se met alors en pause)
+  voile.querySelector('button').addEventListener('click', () => location.reload());
+  document.body.appendChild(voile);
+}
 
 function surveillerNouvelleVersion() {
   if (VERSION_OUTIL === 'dev' || !/^https?:$/.test(location.protocol)) return;
@@ -187,9 +220,21 @@ function initData() {
   // identifiant est rattaché à la fiche actuelle
   const aliasToMain = {};
   state.baseById.forEach(b => (b.alias_ids || []).forEach(a => { aliasToMain[a] = b.id; }));
+  state.aliasToMain = aliasToMain;
   Suivi.remapAliases(aliasToMain);
+  remapLiensClients();
   applySuiviToAll();
   applyFilters();
+}
+
+// Client relié à une fiche fusionnée ou renommée par une mise à jour des données : le lien suit la fiche actuelle
+function remapLiensClients() {
+  const vers = state.aliasToMain || {};
+  for (const p of Object.values(Suivi.collection('pdv'))) {
+    if (!p.supprime && p.librairie_id != null && vers[p.librairie_id] && vers[p.librairie_id] !== p.librairie_id) {
+      Suivi.put('pdv', p.id, { ...p, librairie_id: vers[p.librairie_id] });
+    }
+  }
 }
 
 /**
@@ -488,6 +533,7 @@ const PROCEDURES = {
   plan_redressement: { court: 'Plan de redressement', long: 'Plan de redressement en cours', grave: false },
   sauvegarde: { court: 'Sauvegarde', long: 'En procédure de sauvegarde', grave: true },
   plan_sauvegarde: { court: 'Plan de sauvegarde', long: 'Plan de sauvegarde en cours', grave: false },
+  fin: { court: 'Procédure terminée', long: 'Procédure collective terminée (activité poursuivie)', grave: false },
   autre: { court: 'Procédure', long: 'Procédure collective', grave: false }
 };
 
@@ -1385,7 +1431,11 @@ function renderFranceView() {
 /**
  * 13. OUVERTURE & GESTION DU DRAWER (FICHE DÉTAILLÉE GOOGLE MAPS & CRM)
  */
-function openDrawer(id) {
+function openDrawer(id, dejaEnregistree) {
+  // La fiche affichée jusque-là est enregistrée avant d'être remplacée (dernière frappe comprise),
+  // sauf si l'appelant vient de le faire (réaffichage après réception d'une sauvegarde : l'affichage
+  // est alors périmé et ne doit surtout pas être réenregistré)
+  if (!dejaEnregistree) flushDrawer();
   const item = state.bookstores.find(b => b.id === id);
   if (!item) return;
 
@@ -2112,7 +2162,16 @@ function setSuivi(id, patch) {
   const updated = applySuivi(cloneItem(base), Suivi.all()[id]);
   const idx = state.bookstores.findIndex(b => b.id === id);
   if (idx !== -1) state.bookstores[idx] = updated;
-  if (state.selectedBookstore && state.selectedBookstore.id === id) state.selectedBookstore = updated;
+  if (state.selectedBookstore && state.selectedBookstore.id === id) {
+    state.selectedBookstore = updated;
+    // Fiche ouverte : ses menus suivent la valeur enregistrée (modifiée ailleurs : tableau, appels du jour…),
+    // sinon sa fermeture réenregistrerait l'ancienne valeur affichée
+    const champs = { statut_prospection: 'drawer-status-select', priorite: 'drawer-priority-select', date_relance: 'drawer-next-date', date_derniere_action: 'drawer-last-date' };
+    for (const [k, elId] of Object.entries(champs)) {
+      const el = k in patch && document.getElementById(elId);
+      if (el && el.value !== (updated[k] || '')) el.value = updated[k] || '';
+    }
+  }
   return updated;
 }
 
@@ -2142,11 +2201,19 @@ function initSaveStatus() {
       .filter(Boolean).join('\n');
   });
   Suivi.onRemoteChange = () => {
+    // Ce qui vient d'être tapé dans la fiche ouverte est enregistré AVANT d'appliquer la sauvegarde reçue ;
+    // la fiche est ensuite réaffichée avec les valeurs à jour (sinon, à sa fermeture, d'anciennes valeurs
+    // affichées seraient réenregistrées par-dessus celles reçues)
+    const ouverte = document.getElementById('drawer-backdrop')?.classList.contains('active');
+    const ficheOuverte = ouverte && state.selectedBookstore ? state.selectedBookstore.id : null;
+    if (ficheOuverte) flushDrawer();
+    remapLiensClients();
     applySuiviToAll();
     applyFilters();
     renderActiveView();
     updateKpis();
-    if (state.selectedClient && document.getElementById('drawer-backdrop')?.classList.contains('active')) openClient(state.selectedClient);
+    if (ficheOuverte && state.bookstores.some(b => b.id === ficheOuverte)) openDrawer(ficheOuverte, true);
+    else if (ouverte && state.selectedClient) openClient(state.selectedClient);
   };
 }
 

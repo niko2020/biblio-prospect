@@ -50,8 +50,31 @@ const Suivi = (() => {
     return { data: migrateOld(), gestion: emptyGestion(), pending: false, sha: null, lastSync: null };
   }
 
+  // Un autre onglet (ou une ancienne version restée ouverte) a pu enregistrer entre-temps dans ce navigateur :
+  // on reprend ses modifications plus récentes, élément par élément, avant d'écrire (sinon on les effacerait)
+  function fusionnerStockage() {
+    const s = readJson(LOCAL_KEY, null);
+    if (!s || !s.data) return;
+    local.data = mergeMaps(s.data, local.data).merged;
+    const g = s.gestion || {};
+    for (const c of new Set([...Object.keys(g), ...Object.keys(local.gestion)])) {
+      local.gestion[c] = mergeMaps(g[c] || {}, local.gestion[c] || {}).merged;
+    }
+    if (s.pending) local.pending = true;
+  }
+
+  // Onglet mis en pause (l'outil est ouvert dans un autre onglet, qui a la main) : plus aucune écriture ni envoi
+  let suspendu = false;
+  function suspendre() {
+    suspendu = true;
+    clearTimeout(pushTimer);
+    pushTimer = null;
+  }
+
   function writeLocal() {
+    if (suspendu) return true;
     try {
+      fusionnerStockage();
       localStorage.setItem(LOCAL_KEY, JSON.stringify(local));
       return true;
     } catch (e) {
@@ -223,8 +246,9 @@ const Suivi = (() => {
     const lib = mergeMaps(remote.data, local.data);
     let localNewer = lib.localNewer;
     const gestion = {};
-    for (const c of COLLECTIONS) {
-      const m = mergeMaps((remote.gestion || {})[c] || {}, local.gestion[c]);
+    // Toutes les collections, y compris celles qu'une version plus récente aurait ajoutées : jamais effacées
+    for (const c of new Set([...COLLECTIONS, ...Object.keys(remote.gestion || {}), ...Object.keys(local.gestion || {})])) {
+      const m = mergeMaps((remote.gestion || {})[c] || {}, local.gestion[c] || {});
       gestion[c] = m.merged;
       localNewer = localNewer || m.localNewer;
     }
@@ -242,6 +266,7 @@ const Suivi = (() => {
   }
 
   async function pull() {
+    if (suspendu) return false;
     if (!isConfigured()) { setStatus('non_configure'); return false; }
     if (busy) return false;
     busy = true;
@@ -268,6 +293,7 @@ const Suivi = (() => {
   }
 
   async function push(retry = true) {
+    if (suspendu && !busy) return;
     if (!isConfigured()) { setStatus('non_configure'); return; }
     if (busy || !local.pending) return;
     busy = true;
@@ -310,6 +336,7 @@ const Suivi = (() => {
   }
 
   function schedulePush() {
+    if (suspendu) return;
     if (!isConfigured()) { setStatus('non_configure'); return; }
     setStatus('attente', '');
     // Un seul minuteur : il n'est pas relancé à chaque frappe, l'envoi part au plus tard après 2 minutes
@@ -355,7 +382,14 @@ const Suivi = (() => {
     flush();
   });
   window.addEventListener('pagehide', () => flush());
+  // Un autre onglet de ce navigateur vient d'enregistrer : on reprend ses modifications et on rafraîchit l'affichage
+  window.addEventListener('storage', e => {
+    if (e.key !== LOCAL_KEY || suspendu) return;
+    const avant = snapshotOf();
+    fusionnerStockage();
+    if (snapshotOf() !== avant && typeof Suivi !== 'undefined' && Suivi.onRemoteChange) Suivi.onRemoteChange();
+  });
 
-  return { all, update, collection, put, flush, loadSnapshot, remapAliases, pull, push, onStatus, getConfig, setConfig, isConfigured, testConfig, historyUrl, onRemoteChange: null,
+  return { all, update, collection, put, flush, suspendre, loadSnapshot, remapAliases, pull, push, onStatus, getConfig, setConfig, isConfigured, testConfig, historyUrl, onRemoteChange: null,
     pendingCount: () => (local.pending ? 1 : 0), lastSync: () => local.lastSync };
 })();
