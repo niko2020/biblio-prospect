@@ -25,7 +25,7 @@ const Suivi = (() => {
   const DEFAULT_CONFIG = { owner: 'niko2020', repo: 'biblio-prospect-donnees', token: '' };
 
   // Collections de gestion (dépôt-vente) : chaque élément porte « maj » (date de dernière modification)
-  const COLLECTIONS = ['pdv', 'titres', 'mouvements', 'factures', 'anomalies'];
+  const COLLECTIONS = ['pdv', 'titres', 'mouvements', 'factures', 'anomalies', 'tournees', 'salons'];
   const emptyGestion = () => Object.fromEntries(COLLECTIONS.map(c => [c, {}]));
 
   // { data: { id librairie: entrée }, gestion: { collection: { id: élément } }, pending, sha, lastSync }

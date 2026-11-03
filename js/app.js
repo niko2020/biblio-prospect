@@ -706,7 +706,7 @@ function switchView(viewName) {
   const targetSec = document.getElementById(`view-${viewName}`);
   if (targetSec) targetSec.classList.add('active-view');
   document.querySelectorAll('.view-tab-btn').forEach(b => b.classList.toggle('active', b.getAttribute('data-view') === viewName));
-  document.body.dataset.vue = ['accueil', 'clients'].includes(viewName) ? 'gestion' : 'prospection';
+  document.body.dataset.vue = ['accueil', 'clients', 'tournees', 'salons'].includes(viewName) ? 'gestion' : 'prospection';
   renderActiveView();
   saveUiState();
 }
@@ -796,6 +796,12 @@ function renderActiveViewNow() {
       break;
     case 'clients':
       renderClientsView();
+      break;
+    case 'tournees':
+      if (typeof renderTourneesView === 'function') renderTourneesView();
+      break;
+    case 'salons':
+      if (typeof renderSalonsView === 'function') renderSalonsView();
       break;
   }
 }
@@ -1472,6 +1478,7 @@ function openDrawer(id, dejaEnregistree) {
       <button class="btn btn-secondary btn-sm ${item.is_favorite ? 'active' : ''}" id="drawer-fav-btn" onclick="toggleFavorite(${item.id}, event)" style="margin-left:0.75rem;padding:0.2rem 0.55rem;font-size:0.75rem;">
         ${item.is_favorite ? '⭐ En favori' : '☆ Mettre en favori'}
       </button>
+      ${typeof ajouterATournee === 'function' ? `<button class="btn btn-secondary btn-sm" onclick="ajouterATournee('lib', ${item.id})" style="margin-left:0.4rem;padding:0.2rem 0.55rem;font-size:0.75rem;" title="Ajouter cette librairie à la tournée en préparation (onglet Tournées)">🚗 Tournée</button>` : ''}
       ${item.fiche_manuelle ? `<button class="btn btn-secondary btn-sm" onclick="ouvrirNouvelleFiche(${item.id})" style="margin-left:0.4rem;padding:0.2rem 0.55rem;font-size:0.75rem;" title="Fiche créée par vous : nom, type, adresse, coordonnées">✏️ Modifier la fiche</button>` : ''}
     `;
   }

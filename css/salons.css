@@ -1,0 +1,65 @@
+/* Salons et marchés */
+.sa-vue { display: block; }
+.sa-vue .btn-sm, .sa-acc .btn-sm, .sa-estim .btn-sm { padding: 0.3rem 0.7rem; font-size: 0.78rem; }
+.sa-muted { color: var(--text-muted); font-size: 0.75rem; }
+
+.sa-reglages summary { cursor: pointer; font-weight: 600; color: var(--text-primary); }
+.sa-reglages[open] summary { margin-bottom: 0.5rem; }
+
+.sa-form { margin-top: 0.75rem; }
+.sa-form input, .sa-form select, .sa-form textarea,
+.sa-bilan-form input, .sa-bilan-form textarea, .sa-reglages input { width: 100%; box-sizing: border-box; }
+.sa-estim { font-size: 0.78rem; color: var(--text-cyan, var(--text-secondary)); margin-top: 0.4rem; }
+.sa-estim:empty { display: none; }
+.sa-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.6rem; }
+
+.sa-entete-liste { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
+.sa-entete-liste h3 { margin: 0; }
+.sa-filtre { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; color: var(--text-secondary); }
+.sa-filtre select { width: auto; }
+
+.sa-liste { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 0.75rem; margin-top: 0.5rem; }
+.sa-card { background: var(--bg-tertiary); border: 1px solid var(--border-subtle); border-left: 4px solid var(--border-subtle); border-radius: 10px; padding: 0.75rem; font-size: 0.82rem; min-width: 0; }
+.sa-st-accepte, .sa-st-fait { border-left-color: var(--accent-emerald); }
+.sa-st-candidature { border-left-color: var(--accent-cyan); }
+.sa-st-idee { border-left-color: var(--accent-gold); }
+.sa-st-refuse, .sa-st-annule { border-left-color: var(--accent-rose); opacity: 0.8; }
+
+.sa-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; flex-wrap: wrap; }
+.sa-titre { display: flex; flex-direction: column; min-width: 0; flex: 1 1 10rem; }
+.sa-nom { color: var(--text-primary); font-size: 0.95rem; overflow-wrap: anywhere; }
+.sa-type { font-size: 0.72rem; color: var(--text-muted); }
+.sa-statut { width: auto; max-width: 100%; font-size: 0.78rem; padding: 0.25rem 0.4rem; }
+.sa-meta { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; margin-top: 0.4rem; color: var(--text-secondary); font-size: 0.78rem; }
+.sa-meta a { color: var(--text-cyan, var(--accent-cyan)); }
+.sa-alerte { margin-top: 0.5rem; padding: 0.35rem 0.55rem; border-radius: 8px; font-weight: 600; font-size: 0.78rem;
+  color: var(--accent-gold); border: 1px solid var(--accent-gold); background: rgba(245, 158, 11, 0.1); }
+.sa-alerte-passee { color: var(--text-muted); border-color: var(--border-subtle); background: transparent; font-weight: 400; }
+.sa-chiffres { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; margin-top: 0.5rem; color: var(--text-primary); }
+.sa-verdict-ligne { margin-top: 0.4rem; display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: center; }
+.sa-verdict { font-weight: 700; padding: 0.1rem 0.55rem; border-radius: 999px; border: 1px solid; font-size: 0.78rem; }
+.sa-v-vert { color: var(--accent-emerald); border-color: var(--accent-emerald); background: rgba(16, 185, 129, 0.12); }
+.sa-v-orange { color: var(--accent-gold); border-color: var(--accent-gold); background: rgba(245, 158, 11, 0.12); }
+.sa-v-rouge { color: var(--accent-rose); border-color: var(--accent-rose); background: rgba(244, 63, 94, 0.12); }
+.sa-gain { color: var(--accent-emerald); }
+.sa-perte { color: var(--accent-rose); }
+.sa-bilan-ligne { margin-top: 0.4rem; color: var(--text-secondary); }
+.sa-notes { margin-top: 0.4rem; color: var(--text-muted); font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sa-suppr:hover { color: var(--accent-rose); border-color: var(--accent-rose); }
+
+.sa-annee h3 { flex-wrap: wrap; }
+.sa-annee-select { width: auto; font-size: 0.8rem; padding: 0.2rem 0.4rem; }
+.sa-annee-grille { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 0.6rem; }
+.sa-annee-grille > div { display: flex; flex-direction: column; gap: 0.1rem; background: var(--bg-tertiary); border-radius: 8px; padding: 0.5rem 0.65rem; }
+.sa-annee-grille strong { font-size: 1.05rem; color: var(--text-primary); }
+.sa-annee-grille strong.sa-gain { color: var(--accent-emerald); }
+.sa-annee-grille strong.sa-perte { color: var(--accent-rose); }
+
+.sa-acc-titre { margin: 0.6rem 0 0.2rem; font-size: 0.8rem; color: var(--text-secondary); }
+.sa-acc-ligne { display: flex; flex-direction: column; gap: 0.1rem; padding: 0.4rem 0; border-top: 1px solid var(--border-subtle); cursor: pointer; font-size: 0.82rem; }
+.sa-acc-ligne:hover strong { color: var(--accent-gold); }
+
+@media (max-width: 480px) {
+  .sa-liste { grid-template-columns: 1fr; }
+  .sa-statut { width: 100%; }
+}

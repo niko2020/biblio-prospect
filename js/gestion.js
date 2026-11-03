@@ -279,6 +279,7 @@ function renderAccueilView() {
       </section>
     </div>
     ${typeof appelsHtml === 'function' ? appelsHtml() : ''}
+    ${typeof salonsAccueilHtml === 'function' ? salonsAccueilHtml() : ''}
     <section class="g-card g-wide">
       <h3>🎯 Prospects à démarcher en premier <button class="g-info" onclick="openRessemblanceInfo()" title="Comment est calculée la ressemblance ?">ⓘ</button></h3>
       <p class="g-help">Votre cible principale (librairies qui ne sont pas 100 % BD / Manga / Jeunesse, pas encore clientes), classée par ressemblance avec celles où vos livres se vendent le mieux. Survolez la note pour le détail.</p>
@@ -411,6 +412,7 @@ function openClient(pid) {
   const lib = pdv.librairie_id ? state.bookstores.find(b => b.id === pdv.librairie_id) : null;
   document.getElementById('drawer-sub').innerHTML = `
     🤝 Client ${pdv.ville ? '· ' + escapeHtml(pdv.ville) : ''}
+    ${typeof ajouterATournee === 'function' ? ` · <a href="#" onclick="ajouterATournee('pdv', '${escapeHtml(pid)}'); return false;" style="color:var(--text-cyan);" title="Ajouter ce client à la tournée en préparation (onglet Tournées)">🚗 Ajouter à la tournée</a>` : ''}
     ${lib ? ` · <a href="#" onclick="openDrawer(${lib.id}); return false;" style="color:var(--text-cyan);">Voir la fiche librairie ↗</a>` : ''}`;
 
   const titres = g.titres;
